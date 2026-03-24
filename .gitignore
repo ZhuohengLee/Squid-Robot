@@ -1,0 +1,12 @@
+.render/
+.tmp/
+
+# Arduino and build artifacts
+build/
+dist/
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.map
