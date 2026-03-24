@@ -1,327 +1,276 @@
-/**********************************************************************
+﻿/**********************************************************************
  * CH9434A.cpp
  *
- * 这个文件实现 CH9434A 芯片的底层 SPI 读写驱动。
- *********************************************************************/
+ * 杩欎釜鏂囦欢瀹炵幇 CH9434A 鑺墖鐨勫簳灞?SPI 璇诲啓椹卞姩銆? *********************************************************************/
 
-// 引入 CH9434A 类声明。
-#include "CH9434A.h"
+// 寮曞叆 CH9434A 绫诲０鏄庛€?#include "CH9434A.h"
 
-// 实现构造函数。
-CH9434A::CH9434A(uint8_t csPin, int8_t intPin)
-    // 保存片选引脚编号。
-    : _csPin(csPin),
-      // 保存中断引脚编号。
-      _intPin(intPin) {
+// 瀹炵幇鏋勯€犲嚱鏁般€?CH9434A::CH9434A(uint8_t csPin, int8_t intPin)
+    // 淇濆瓨鐗囬€夊紩鑴氱紪鍙枫€?    : _csPin(csPin),
+      // 淇濆瓨涓柇寮曡剼缂栧彿銆?      _intPin(intPin) {
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现初始化函数。
-bool CH9434A::begin(uint32_t spiFreq) {
-    // 把片选脚配置为输出。
-    pinMode(_csPin, OUTPUT);
-    // 默认先拉高片选脚。
-    digitalWrite(_csPin, HIGH);
+// 瀹炵幇鍒濆鍖栧嚱鏁般€?bool CH9434A::begin(uint32_t spiFreq) {
+    // 鎶婄墖閫夎剼閰嶇疆涓鸿緭鍑恒€?    pinMode(_csPin, OUTPUT);
+    // 榛樿鍏堟媺楂樼墖閫夎剼銆?    digitalWrite(_csPin, HIGH);
 
-    // 如果提供了中断脚。
-    if (_intPin >= 0) {
-        // 就把中断脚配置为上拉输入。
-        pinMode(_intPin, INPUT_PULLUP);
+    // 濡傛灉鎻愪緵浜嗕腑鏂剼銆?    if (_intPin >= 0) {
+        // 灏辨妸涓柇鑴氶厤缃负涓婃媺杈撳叆銆?        pinMode(_intPin, INPUT_PULLUP);
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
 
-    // 初始化 SPI 外设。
-    SPI.begin();
-    // 保存 SPI 时序配置。
-    _spiSettings = SPISettings(spiFreq, MSBFIRST, SPI_MODE0);
+    // 鍒濆鍖?SPI 澶栬銆?    SPI.begin();
+    // 淇濆瓨 SPI 鏃跺簭閰嶇疆銆?    _spiSettings = SPISettings(spiFreq, MSBFIRST, SPI_MODE0);
 
-    // 上电后先等待芯片稳定。
-    delay(100);
+    // 涓婄數鍚庡厛绛夊緟鑺墖绋冲畾銆?    delay(100);
 
-    // 逐路初始化 4 个 UART 通道。
-    for (uint8_t i = 0; i < CH9434A_NUM_UARTS; i++) {
-        // 关闭该通道所有中断。
-        writeReg(i, CH9434A_REG_IER, 0x00);
-        // 使能 FIFO 并同时清空收发 FIFO。
-        writeReg(i, CH9434A_REG_FCR,
+    // 閫愯矾鍒濆鍖?4 涓?UART 閫氶亾銆?    for (uint8_t i = 0; i < CH9434A_NUM_UARTS; i++) {
+        // 鍏抽棴璇ラ€氶亾鎵€鏈変腑鏂€?        writeReg(i, CH9434A_REG_IER, 0x00);
+        // 浣胯兘 FIFO 骞跺悓鏃舵竻绌烘敹鍙?FIFO銆?        writeReg(i, CH9434A_REG_FCR,
+                 // 中文逐行说明：下面这一行保留原始代码 -> CH9434A_FCR_ENABLE | CH9434A_FCR_RX_RESET | CH9434A_FCR_TX_RESET);
                  CH9434A_FCR_ENABLE | CH9434A_FCR_RX_RESET | CH9434A_FCR_TX_RESET);
-        // 把串口格式设为 8N1。
-        writeReg(i, CH9434A_REG_LCR, CH9434A_LCR_8N1);
+        // 鎶婁覆鍙ｆ牸寮忚涓?8N1銆?        writeReg(i, CH9434A_REG_LCR, CH9434A_LCR_8N1);
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
 
-    // 读取 UART0 的线路状态寄存器做一次基础连通性检查。
-    const uint8_t lsr = readReg(0, CH9434A_REG_LSR);
-    // 过滤明显无效的返回值。
-    return (lsr != 0xFF && lsr != 0x00 && lsr != 0x10);
+    // 璇诲彇 UART0 鐨勭嚎璺姸鎬佸瘎瀛樺櫒鍋氫竴娆″熀纭€杩為€氭€ф鏌ャ€?    const uint8_t lsr = readReg(0, CH9434A_REG_LSR);
+    // 杩囨护鏄庢樉鏃犳晥鐨勮繑鍥炲€笺€?    return (lsr != 0xFF && lsr != 0x00 && lsr != 0x10);
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现 UART 配置函数。
-bool CH9434A::config(uint8_t uartNum, uint32_t baudrate, uint8_t config) {
-    // 如果 UART 编号越界，就返回失败。
-    if (uartNum >= CH9434A_NUM_UARTS) {
+// 瀹炵幇 UART 閰嶇疆鍑芥暟銆?bool CH9434A::config(uint8_t uartNum, uint32_t baudrate, uint8_t config) {
+    // 濡傛灉 UART 缂栧彿瓒婄晫锛屽氨杩斿洖澶辫触銆?    if (uartNum >= CH9434A_NUM_UARTS) {
+        // 中文逐行说明：下面这一行保留原始代码 -> return false;
         return false;
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
 
-    // 先设置 UART 波特率。
-    setBaudrate(uartNum, baudrate);
-    // 再写入线路格式配置。
-    writeReg(uartNum, CH9434A_REG_LCR, config);
-    // 使能 FIFO 并清空收发缓存。
-    writeReg(uartNum, CH9434A_REG_FCR,
+    // 鍏堣缃?UART 娉㈢壒鐜囥€?    setBaudrate(uartNum, baudrate);
+    // 鍐嶅啓鍏ョ嚎璺牸寮忛厤缃€?    writeReg(uartNum, CH9434A_REG_LCR, config);
+    // 浣胯兘 FIFO 骞舵竻绌烘敹鍙戠紦瀛樸€?    writeReg(uartNum, CH9434A_REG_FCR,
+             // 中文逐行说明：下面这一行保留原始代码 -> CH9434A_FCR_ENABLE | CH9434A_FCR_RX_RESET | CH9434A_FCR_TX_RESET);
              CH9434A_FCR_ENABLE | CH9434A_FCR_RX_RESET | CH9434A_FCR_TX_RESET);
 
-    // 返回配置成功。
-    return true;
+    // 杩斿洖閰嶇疆鎴愬姛銆?    return true;
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现写单字节函数。
-void CH9434A::write(uint8_t uartNum, uint8_t data) {
-    // 如果 UART 编号越界，就直接返回。
-    if (uartNum >= CH9434A_NUM_UARTS) {
+// 瀹炵幇鍐欏崟瀛楄妭鍑芥暟銆?void CH9434A::write(uint8_t uartNum, uint8_t data) {
+    // 濡傛灉 UART 缂栧彿瓒婄晫锛屽氨鐩存帴杩斿洖銆?    if (uartNum >= CH9434A_NUM_UARTS) {
+        // 中文逐行说明：下面这一行保留原始代码 -> return;
         return;
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
 
-    // 计算写超时时刻。
-    const uint32_t timeout = millis() + 100;
-    // 持续等待发送保持寄存器变为空。
-    while (!(readReg(uartNum, CH9434A_REG_LSR) & CH9434A_LSR_THRE)) {
-        // 如果已经超时，就放弃本次发送。
-        if (millis() > timeout) {
+    // 璁＄畻鍐欒秴鏃舵椂鍒汇€?    const uint32_t timeout = millis() + 100;
+    // 鎸佺画绛夊緟鍙戦€佷繚鎸佸瘎瀛樺櫒鍙樹负绌恒€?    while (!(readReg(uartNum, CH9434A_REG_LSR) & CH9434A_LSR_THRE)) {
+        // 濡傛灉宸茬粡瓒呮椂锛屽氨鏀惧純鏈鍙戦€併€?        if (millis() > timeout) {
+            // 中文逐行说明：下面这一行保留原始代码 -> return;
             return;
+        // 中文逐行说明：下面这一行保留原始代码 -> }
         }
-        // 让出 CPU，避免长时间忙等。
-        yield();
+        // 璁╁嚭 CPU锛岄伩鍏嶉暱鏃堕棿蹇欑瓑銆?        yield();
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
 
-    // 把目标字节写入发送保持寄存器。
-    writeReg(uartNum, CH9434A_REG_THR, data);
+    // 鎶婄洰鏍囧瓧鑺傚啓鍏ュ彂閫佷繚鎸佸瘎瀛樺櫒銆?    writeReg(uartNum, CH9434A_REG_THR, data);
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现写缓冲区函数。
-size_t CH9434A::write(uint8_t uartNum, const uint8_t* buffer, size_t length) {
-    // 逐字节写出整个缓冲区。
-    for (size_t i = 0; i < length; i++) {
-        // 调用单字节写函数。
-        write(uartNum, buffer[i]);
+// 瀹炵幇鍐欑紦鍐插尯鍑芥暟銆?size_t CH9434A::write(uint8_t uartNum, const uint8_t* buffer, size_t length) {
+    // 閫愬瓧鑺傚啓鍑烘暣涓紦鍐插尯銆?    for (size_t i = 0; i < length; i++) {
+        // 璋冪敤鍗曞瓧鑺傚啓鍑芥暟銆?        write(uartNum, buffer[i]);
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
-    // 返回请求写入的总长度。
-    return length;
+    // 杩斿洖璇锋眰鍐欏叆鐨勬€婚暱搴︺€?    return length;
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现打印字符串函数。
-size_t CH9434A::print(uint8_t uartNum, const char* str) {
-    // 把字符串强转成字节数组后调用缓冲区写函数。
-    return write(uartNum, reinterpret_cast<const uint8_t*>(str), strlen(str));
+// 瀹炵幇鎵撳嵃瀛楃涓插嚱鏁般€?size_t CH9434A::print(uint8_t uartNum, const char* str) {
+    // 鎶婂瓧绗︿覆寮鸿浆鎴愬瓧鑺傛暟缁勫悗璋冪敤缂撳啿鍖哄啓鍑芥暟銆?    return write(uartNum, reinterpret_cast<const uint8_t*>(str), strlen(str));
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现打印字符串并换行函数。
-size_t CH9434A::println(uint8_t uartNum, const char* str) {
-    // 先打印字符串主体。
-    const size_t n = print(uartNum, str);
-    // 发送回车符。
-    write(uartNum, '\r');
-    // 发送换行符。
-    write(uartNum, '\n');
-    // 返回总写出字符数。
-    return n + 2;
+// 瀹炵幇鎵撳嵃瀛楃涓插苟鎹㈣鍑芥暟銆?size_t CH9434A::println(uint8_t uartNum, const char* str) {
+    // 鍏堟墦鍗板瓧绗︿覆涓讳綋銆?    const size_t n = print(uartNum, str);
+    // 鍙戦€佸洖杞︾銆?    write(uartNum, '\r');
+    // 鍙戦€佹崲琛岀銆?    write(uartNum, '\n');
+    // 杩斿洖鎬诲啓鍑哄瓧绗︽暟銆?    return n + 2;
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现读单字节函数。
-uint8_t CH9434A::read(uint8_t uartNum) {
-    // 如果 UART 编号越界，就返回 0。
-    if (uartNum >= CH9434A_NUM_UARTS) {
+// 瀹炵幇璇诲崟瀛楄妭鍑芥暟銆?uint8_t CH9434A::read(uint8_t uartNum) {
+    // 濡傛灉 UART 缂栧彿瓒婄晫锛屽氨杩斿洖 0銆?    if (uartNum >= CH9434A_NUM_UARTS) {
+        // 中文逐行说明：下面这一行保留原始代码 -> return 0;
         return 0;
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
 
-    // 如果接收数据就绪位未置位，就说明当前没有数据。
-    if (!(readReg(uartNum, CH9434A_REG_LSR) & CH9434A_LSR_DR)) {
+    // 濡傛灉鎺ユ敹鏁版嵁灏辩华浣嶆湭缃綅锛屽氨璇存槑褰撳墠娌℃湁鏁版嵁銆?    if (!(readReg(uartNum, CH9434A_REG_LSR) & CH9434A_LSR_DR)) {
+        // 中文逐行说明：下面这一行保留原始代码 -> return 0;
         return 0;
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
 
-    // 从接收保持寄存器读取一个字节并返回。
-    return readReg(uartNum, CH9434A_REG_RHR);
+    // 浠庢帴鏀朵繚鎸佸瘎瀛樺櫒璇诲彇涓€涓瓧鑺傚苟杩斿洖銆?    return readReg(uartNum, CH9434A_REG_RHR);
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现读多个字节函数。
-size_t CH9434A::read(uint8_t uartNum, uint8_t* buffer, size_t maxLength) {
-    // 初始化已读取字节数为 0。
-    size_t count = 0;
+// 瀹炵幇璇诲涓瓧鑺傚嚱鏁般€?size_t CH9434A::read(uint8_t uartNum, uint8_t* buffer, size_t maxLength) {
+    // 鍒濆鍖栧凡璇诲彇瀛楄妭鏁颁负 0銆?    size_t count = 0;
 
-    // 在缓冲区未满时持续读取。
-    while (count < maxLength) {
-        // 如果当前已经没有可读数据，就退出循环。
-        if (!(readReg(uartNum, CH9434A_REG_LSR) & CH9434A_LSR_DR)) {
+    // 鍦ㄧ紦鍐插尯鏈弧鏃舵寔缁鍙栥€?    while (count < maxLength) {
+        // 濡傛灉褰撳墠宸茬粡娌℃湁鍙鏁版嵁锛屽氨閫€鍑哄惊鐜€?        if (!(readReg(uartNum, CH9434A_REG_LSR) & CH9434A_LSR_DR)) {
+            // 中文逐行说明：下面这一行保留原始代码 -> break;
             break;
+        // 中文逐行说明：下面这一行保留原始代码 -> }
         }
-        // 读取一个字节放入缓冲区，并递增计数器。
-        buffer[count++] = readReg(uartNum, CH9434A_REG_RHR);
+        // 璇诲彇涓€涓瓧鑺傛斁鍏ョ紦鍐插尯锛屽苟閫掑璁℃暟鍣ㄣ€?        buffer[count++] = readReg(uartNum, CH9434A_REG_RHR);
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
 
-    // 返回实际读取的字节数。
-    return count;
+    // 杩斿洖瀹為檯璇诲彇鐨勫瓧鑺傛暟銆?    return count;
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现可读数据查询函数。
-int CH9434A::available(uint8_t uartNum) {
-    // 如果 UART 编号越界，就返回 0。
-    if (uartNum >= CH9434A_NUM_UARTS) {
+// 瀹炵幇鍙鏁版嵁鏌ヨ鍑芥暟銆?int CH9434A::available(uint8_t uartNum) {
+    // 濡傛灉 UART 缂栧彿瓒婄晫锛屽氨杩斿洖 0銆?    if (uartNum >= CH9434A_NUM_UARTS) {
+        // 中文逐行说明：下面这一行保留原始代码 -> return 0;
         return 0;
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
-    // 根据数据就绪位返回 1 或 0。
-    return (readReg(uartNum, CH9434A_REG_LSR) & CH9434A_LSR_DR) ? 1 : 0;
+    // 鏍规嵁鏁版嵁灏辩华浣嶈繑鍥?1 鎴?0銆?    return (readReg(uartNum, CH9434A_REG_LSR) & CH9434A_LSR_DR) ? 1 : 0;
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现清空接收 FIFO 的函数。
-void CH9434A::flush(uint8_t uartNum) {
-    // 如果 UART 编号越界，就直接返回。
-    if (uartNum >= CH9434A_NUM_UARTS) {
+// 瀹炵幇娓呯┖鎺ユ敹 FIFO 鐨勫嚱鏁般€?void CH9434A::flush(uint8_t uartNum) {
+    // 濡傛灉 UART 缂栧彿瓒婄晫锛屽氨鐩存帴杩斿洖銆?    if (uartNum >= CH9434A_NUM_UARTS) {
+        // 中文逐行说明：下面这一行保留原始代码 -> return;
         return;
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
-    // 使能 FIFO 并复位接收 FIFO。
-    writeReg(uartNum, CH9434A_REG_FCR, CH9434A_FCR_ENABLE | CH9434A_FCR_RX_RESET);
+    // 浣胯兘 FIFO 骞跺浣嶆帴鏀?FIFO銆?    writeReg(uartNum, CH9434A_REG_FCR, CH9434A_FCR_ENABLE | CH9434A_FCR_RX_RESET);
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现线路状态读取函数。
-uint8_t CH9434A::getLineStatus(uint8_t uartNum) {
-    // 如果 UART 编号越界，就返回 0。
-    if (uartNum >= CH9434A_NUM_UARTS) {
+// 瀹炵幇绾胯矾鐘舵€佽鍙栧嚱鏁般€?uint8_t CH9434A::getLineStatus(uint8_t uartNum) {
+    // 濡傛灉 UART 缂栧彿瓒婄晫锛屽氨杩斿洖 0銆?    if (uartNum >= CH9434A_NUM_UARTS) {
+        // 中文逐行说明：下面这一行保留原始代码 -> return 0;
         return 0;
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
-    // 读取并返回线路状态寄存器。
-    return readReg(uartNum, CH9434A_REG_LSR);
+    // 璇诲彇骞惰繑鍥炵嚎璺姸鎬佸瘎瀛樺櫒銆?    return readReg(uartNum, CH9434A_REG_LSR);
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现中断状态读取函数。
-uint8_t CH9434A::getInterruptStatus(uint8_t uartNum) {
-    // 如果 UART 编号越界，就返回 0。
-    if (uartNum >= CH9434A_NUM_UARTS) {
+// 瀹炵幇涓柇鐘舵€佽鍙栧嚱鏁般€?uint8_t CH9434A::getInterruptStatus(uint8_t uartNum) {
+    // 濡傛灉 UART 缂栧彿瓒婄晫锛屽氨杩斿洖 0銆?    if (uartNum >= CH9434A_NUM_UARTS) {
+        // 中文逐行说明：下面这一行保留原始代码 -> return 0;
         return 0;
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
-    // 读取并返回中断状态寄存器。
-    return readReg(uartNum, CH9434A_REG_IIR);
+    // 璇诲彇骞惰繑鍥炰腑鏂姸鎬佸瘎瀛樺櫒銆?    return readReg(uartNum, CH9434A_REG_IIR);
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现中断使能函数。
-void CH9434A::enableInterrupt(uint8_t uartNum, uint8_t flags) {
-    // 如果 UART 编号越界，就直接返回。
-    if (uartNum >= CH9434A_NUM_UARTS) {
+// 瀹炵幇涓柇浣胯兘鍑芥暟銆?void CH9434A::enableInterrupt(uint8_t uartNum, uint8_t flags) {
+    // 濡傛灉 UART 缂栧彿瓒婄晫锛屽氨鐩存帴杩斿洖銆?    if (uartNum >= CH9434A_NUM_UARTS) {
+        // 中文逐行说明：下面这一行保留原始代码 -> return;
         return;
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
-    // 向中断使能寄存器写入目标标志位。
-    writeReg(uartNum, CH9434A_REG_IER, flags);
+    // 鍚戜腑鏂娇鑳藉瘎瀛樺櫒鍐欏叆鐩爣鏍囧織浣嶃€?    writeReg(uartNum, CH9434A_REG_IER, flags);
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现中断关闭函数。
-void CH9434A::disableInterrupt(uint8_t uartNum) {
-    // 如果 UART 编号越界，就直接返回。
-    if (uartNum >= CH9434A_NUM_UARTS) {
+// 瀹炵幇涓柇鍏抽棴鍑芥暟銆?void CH9434A::disableInterrupt(uint8_t uartNum) {
+    // 濡傛灉 UART 缂栧彿瓒婄晫锛屽氨鐩存帴杩斿洖銆?    if (uartNum >= CH9434A_NUM_UARTS) {
+        // 中文逐行说明：下面这一行保留原始代码 -> return;
         return;
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
-    // 把中断使能寄存器清零。
-    writeReg(uartNum, CH9434A_REG_IER, 0x00);
+    // 鎶婁腑鏂娇鑳藉瘎瀛樺櫒娓呴浂銆?    writeReg(uartNum, CH9434A_REG_IER, 0x00);
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现发送完成检查函数。
-bool CH9434A::isTxEmpty(uint8_t uartNum) {
-    // 检查线路状态寄存器中的发送完全空闲位。
-    return (getLineStatus(uartNum) & CH9434A_LSR_TEMT) != 0;
+// 瀹炵幇鍙戦€佸畬鎴愭鏌ュ嚱鏁般€?bool CH9434A::isTxEmpty(uint8_t uartNum) {
+    // 妫€鏌ョ嚎璺姸鎬佸瘎瀛樺櫒涓殑鍙戦€佸畬鍏ㄧ┖闂蹭綅銆?    return (getLineStatus(uartNum) & CH9434A_LSR_TEMT) != 0;
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现等待发送完成函数。
-void CH9434A::waitTxComplete(uint8_t uartNum, uint32_t timeout) {
-    // 记录等待起始时间。
-    const uint32_t start = millis();
-    // 只要发送还没完成，就持续等待。
-    while (!isTxEmpty(uartNum)) {
-        // 如果等待时间已经超时，就退出。
-        if (millis() - start > timeout) {
+// 瀹炵幇绛夊緟鍙戦€佸畬鎴愬嚱鏁般€?void CH9434A::waitTxComplete(uint8_t uartNum, uint32_t timeout) {
+    // 璁板綍绛夊緟璧峰鏃堕棿銆?    const uint32_t start = millis();
+    // 鍙鍙戦€佽繕娌″畬鎴愶紝灏辨寔缁瓑寰呫€?    while (!isTxEmpty(uartNum)) {
+        // 濡傛灉绛夊緟鏃堕棿宸茬粡瓒呮椂锛屽氨閫€鍑恒€?        if (millis() - start > timeout) {
+            // 中文逐行说明：下面这一行保留原始代码 -> break;
             break;
+        // 中文逐行说明：下面这一行保留原始代码 -> }
         }
-        // 让出 CPU，避免长时间忙等。
-        yield();
+        // 璁╁嚭 CPU锛岄伩鍏嶉暱鏃堕棿蹇欑瓑銆?        yield();
+    // 中文逐行说明：下面这一行保留原始代码 -> }
     }
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现 UART 基地址获取函数。
-uint16_t CH9434A::getBaseAddr(uint8_t uartNum) {
-    // 当前实现不直接使用基地址，因此仅消除未使用参数警告。
-    (void)uartNum;
-    // 返回 0 作为占位值。
-    return 0;
+// 瀹炵幇 UART 鍩哄湴鍧€鑾峰彇鍑芥暟銆?uint16_t CH9434A::getBaseAddr(uint8_t uartNum) {
+    // 褰撳墠瀹炵幇涓嶇洿鎺ヤ娇鐢ㄥ熀鍦板潃锛屽洜姝や粎娑堥櫎鏈娇鐢ㄥ弬鏁拌鍛娿€?    (void)uartNum;
+    // 杩斿洖 0 浣滀负鍗犱綅鍊笺€?    return 0;
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现寄存器写函数。
-void CH9434A::writeReg(uint8_t uartNum, uint8_t reg, uint8_t value) {
-    // 计算目标寄存器地址。
-    const uint8_t addr = reg + (CH9434A_UART_BASE_STEP * uartNum);
+// 瀹炵幇瀵勫瓨鍣ㄥ啓鍑芥暟銆?void CH9434A::writeReg(uint8_t uartNum, uint8_t reg, uint8_t value) {
+    // 璁＄畻鐩爣瀵勫瓨鍣ㄥ湴鍧€銆?    const uint8_t addr = reg + (CH9434A_UART_BASE_STEP * uartNum);
 
-    // 开始一次 SPI 事务。
-    SPI.beginTransaction(_spiSettings);
-    // 拉低片选脚，选中 CH9434A。
-    digitalWrite(_csPin, LOW);
+    // 寮€濮嬩竴娆?SPI 浜嬪姟銆?    SPI.beginTransaction(_spiSettings);
+    // 鎷変綆鐗囬€夎剼锛岄€変腑 CH9434A銆?    digitalWrite(_csPin, LOW);
 
-    // 发送写命令，最高位为 1。
-    SPI.transfer(0x80 | addr);
-    // 按当前经验增加短延时，改善时序稳定性。
-    delayMicroseconds(1);
-    // 发送寄存器值。
-    SPI.transfer(value);
+    // 鍙戦€佸啓鍛戒护锛屾渶楂樹綅涓?1銆?    SPI.transfer(0x80 | addr);
+    // 鎸夊綋鍓嶇粡楠屽鍔犵煭寤舵椂锛屾敼鍠勬椂搴忕ǔ瀹氭€с€?    delayMicroseconds(1);
+    // 鍙戦€佸瘎瀛樺櫒鍊笺€?    SPI.transfer(value);
 
-    // 再增加三个短延时，给芯片留出内部锁存时间。
+    // 鍐嶅鍔犱笁涓煭寤舵椂锛岀粰鑺墖鐣欏嚭鍐呴儴閿佸瓨鏃堕棿銆?    delayMicroseconds(1);
+    // 中文逐行说明：下面这一行保留原始代码 -> delayMicroseconds(1);
     delayMicroseconds(1);
-    delayMicroseconds(1);
+    // 中文逐行说明：下面这一行保留原始代码 -> delayMicroseconds(1);
     delayMicroseconds(1);
 
-    // 拉高片选脚，结束对芯片的访问。
-    digitalWrite(_csPin, HIGH);
-    // 结束 SPI 事务。
-    SPI.endTransaction();
+    // 鎷夐珮鐗囬€夎剼锛岀粨鏉熷鑺墖鐨勮闂€?    digitalWrite(_csPin, HIGH);
+    // 缁撴潫 SPI 浜嬪姟銆?    SPI.endTransaction();
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现寄存器读函数。
-uint8_t CH9434A::readReg(uint8_t uartNum, uint8_t reg) {
-    // 计算目标寄存器地址。
-    const uint8_t addr = reg + (CH9434A_UART_BASE_STEP * uartNum);
+// 瀹炵幇瀵勫瓨鍣ㄨ鍑芥暟銆?uint8_t CH9434A::readReg(uint8_t uartNum, uint8_t reg) {
+    // 璁＄畻鐩爣瀵勫瓨鍣ㄥ湴鍧€銆?    const uint8_t addr = reg + (CH9434A_UART_BASE_STEP * uartNum);
 
-    // 开始一次 SPI 事务。
-    SPI.beginTransaction(_spiSettings);
-    // 拉低片选脚，选中 CH9434A。
-    digitalWrite(_csPin, LOW);
+    // 寮€濮嬩竴娆?SPI 浜嬪姟銆?    SPI.beginTransaction(_spiSettings);
+    // 鎷変綆鐗囬€夎剼锛岄€変腑 CH9434A銆?    digitalWrite(_csPin, LOW);
 
-    // 发送读命令，最高位保持 0。
-    SPI.transfer(addr);
-    // 增加三个短延时，满足当前驱动经验时序。
+    // 鍙戦€佽鍛戒护锛屾渶楂樹綅淇濇寔 0銆?    SPI.transfer(addr);
+    // 澧炲姞涓変釜鐭欢鏃讹紝婊¤冻褰撳墠椹卞姩缁忛獙鏃跺簭銆?    delayMicroseconds(1);
+    // 中文逐行说明：下面这一行保留原始代码 -> delayMicroseconds(1);
     delayMicroseconds(1);
-    delayMicroseconds(1);
+    // 中文逐行说明：下面这一行保留原始代码 -> delayMicroseconds(1);
     delayMicroseconds(1);
 
-    // 发送 dummy 字节并同时取回返回值。
-    const uint8_t value = SPI.transfer(0xFF);
-    // 再增加一个短延时。
-    delayMicroseconds(1);
+    // 鍙戦€?dummy 瀛楄妭骞跺悓鏃跺彇鍥炶繑鍥炲€笺€?    const uint8_t value = SPI.transfer(0xFF);
+    // 鍐嶅鍔犱竴涓煭寤舵椂銆?    delayMicroseconds(1);
 
-    // 拉高片选脚，结束对芯片的访问。
-    digitalWrite(_csPin, HIGH);
-    // 结束 SPI 事务。
-    SPI.endTransaction();
+    // 鎷夐珮鐗囬€夎剼锛岀粨鏉熷鑺墖鐨勮闂€?    digitalWrite(_csPin, HIGH);
+    // 缁撴潫 SPI 浜嬪姟銆?    SPI.endTransaction();
 
-    // 返回读到的寄存器值。
-    return value;
+    // 杩斿洖璇诲埌鐨勫瘎瀛樺櫒鍊笺€?    return value;
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }
 
-// 实现波特率配置函数。
-void CH9434A::setBaudrate(uint8_t uartNum, uint32_t baudrate) {
-    // 定义 CH9434A 的内部时钟频率。
-    const uint32_t clockFreq = 32000000;
-    // 根据官方公式计算分频值。
-    const uint16_t divisor = clockFreq / (8 * baudrate);
+// 瀹炵幇娉㈢壒鐜囬厤缃嚱鏁般€?void CH9434A::setBaudrate(uint8_t uartNum, uint32_t baudrate) {
+    // 瀹氫箟 CH9434A 鐨勫唴閮ㄦ椂閽熼鐜囥€?    const uint32_t clockFreq = 32000000;
+    // 鏍规嵁瀹樻柟鍏紡璁＄畻鍒嗛鍊笺€?    const uint16_t divisor = clockFreq / (8 * baudrate);
 
-    // 先读取当前线路控制寄存器。
-    const uint8_t lcr = readReg(uartNum, CH9434A_REG_LCR);
-    // 置位 DLAB，切换到分频寄存器访问模式。
-    writeReg(uartNum, CH9434A_REG_LCR, lcr | CH9434A_LCR_DLAB);
-    // 写入分频低字节。
-    writeReg(uartNum, CH9434A_REG_DLL, divisor & 0xFF);
-    // 写入分频高字节。
-    writeReg(uartNum, CH9434A_REG_DLM, (divisor >> 8) & 0xFF);
-    // 清除 DLAB，恢复正常寄存器访问模式。
-    writeReg(uartNum, CH9434A_REG_LCR, lcr & ~CH9434A_LCR_DLAB);
+    // 鍏堣鍙栧綋鍓嶇嚎璺帶鍒跺瘎瀛樺櫒銆?    const uint8_t lcr = readReg(uartNum, CH9434A_REG_LCR);
+    // 缃綅 DLAB锛屽垏鎹㈠埌鍒嗛瀵勫瓨鍣ㄨ闂ā寮忋€?    writeReg(uartNum, CH9434A_REG_LCR, lcr | CH9434A_LCR_DLAB);
+    // 鍐欏叆鍒嗛浣庡瓧鑺傘€?    writeReg(uartNum, CH9434A_REG_DLL, divisor & 0xFF);
+    // 鍐欏叆鍒嗛楂樺瓧鑺傘€?    writeReg(uartNum, CH9434A_REG_DLM, (divisor >> 8) & 0xFF);
+    // 娓呴櫎 DLAB锛屾仮澶嶆甯稿瘎瀛樺櫒璁块棶妯″紡銆?    writeReg(uartNum, CH9434A_REG_LCR, lcr & ~CH9434A_LCR_DLAB);
+// 中文逐行说明：下面这一行保留原始代码 -> }
 }

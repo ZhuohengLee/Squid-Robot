@@ -1,51 +1,35 @@
-/**********************************************************************
+﻿/**********************************************************************
  * SensorHub.h
  *
- * 这个文件声明 ESP32 侧的多传感器汇总接口。
- *********************************************************************/
+ * 杩欎釜鏂囦欢澹版槑 ESP32 渚х殑澶氫紶鎰熷櫒姹囨€绘帴鍙ｃ€? *********************************************************************/
 
-// 防止头文件被重复包含。
-#ifndef ESP32_SENSOR_HUB_H
-// 定义头文件保护宏。
-#define ESP32_SENSOR_HUB_H
+// 闃叉澶存枃浠惰閲嶅鍖呭惈銆?#ifndef ESP32_SENSOR_HUB_H
+// 瀹氫箟澶存枃浠朵繚鎶ゅ畯銆?#define ESP32_SENSOR_HUB_H
 
-// 引入 Arduino 基础类型。
-#include <Arduino.h>
-// 引入深度传感器管理类定义。
-#include "DepthSensorManager.h"
-// 引入超声波管理类定义。
-#include "UltrasonicManager.h"
+// 寮曞叆 Arduino 鍩虹绫诲瀷銆?#include <Arduino.h>
+// 寮曞叆娣卞害浼犳劅鍣ㄧ鐞嗙被瀹氫箟銆?#include "DepthSensorManager.h"
+// 寮曞叆瓒呭０娉㈢鐞嗙被瀹氫箟銆?#include "UltrasonicManager.h"
 
-// 声明传感器汇总类。
-class SensorHub {
+// 澹版槑浼犳劅鍣ㄦ眹鎬荤被銆?class SensorHub {
+// 中文逐行说明：下面这一行保留原始代码 -> public:
 public:
-    // 声明构造函数。
-    SensorHub();
+    // 澹版槑鏋勯€犲嚱鏁般€?    SensorHub();
 
-    // 声明注入深度传感器管理器的函数。
-    void setDepthSensorManager(DepthSensorManager* manager);
-    // 声明注入超声波管理器的函数。
-    void setUltrasonicManager(UltrasonicManager* manager);
+    // 澹版槑娉ㄥ叆娣卞害浼犳劅鍣ㄧ鐞嗗櫒鐨勫嚱鏁般€?    void setDepthSensorManager(DepthSensorManager* manager);
+    // 澹版槑娉ㄥ叆瓒呭０娉㈢鐞嗗櫒鐨勫嚱鏁般€?    void setUltrasonicManager(UltrasonicManager* manager);
 
-    // 声明执行深度零点校准的函数。
-    void calibrateDepthZero();
-    // 声明完整打印所有传感器状态的函数。
-    void displayAll();
-    // 声明紧凑打印所有传感器状态的函数。
-    void displayCompact();
-    // 声明执行传感器健康检查的函数。
-    bool isHealthy() const;
-    // 声明返回当前有效传感器数量的函数。
-    uint8_t getSensorCount() const;
+    // 澹版槑鎵ц娣卞害闆剁偣鏍″噯鐨勫嚱鏁般€?    void calibrateDepthZero();
+    // 澹版槑瀹屾暣鎵撳嵃鎵€鏈変紶鎰熷櫒鐘舵€佺殑鍑芥暟銆?    void displayAll();
+    // 澹版槑绱у噾鎵撳嵃鎵€鏈変紶鎰熷櫒鐘舵€佺殑鍑芥暟銆?    void displayCompact();
+    // 澹版槑鎵ц浼犳劅鍣ㄥ仴搴锋鏌ョ殑鍑芥暟銆?    bool isHealthy() const;
+    // 澹版槑杩斿洖褰撳墠鏈夋晥浼犳劅鍣ㄦ暟閲忕殑鍑芥暟銆?    uint8_t getSensorCount() const;
 
+// 中文逐行说明：下面这一行保留原始代码 -> private:
 private:
-    // 保存深度传感器管理器指针。
-    DepthSensorManager* _depthMgr;
-    // 保存超声波管理器指针。
-    UltrasonicManager* _ultrasonicMgr;
-    // 保存上一次完整打印的时间戳。
-    uint32_t _lastDisplay;
+    // 淇濆瓨娣卞害浼犳劅鍣ㄧ鐞嗗櫒鎸囬拡銆?    DepthSensorManager* _depthMgr;
+    // 淇濆瓨瓒呭０娉㈢鐞嗗櫒鎸囬拡銆?    UltrasonicManager* _ultrasonicMgr;
+    // 淇濆瓨涓婁竴娆″畬鏁存墦鍗扮殑鏃堕棿鎴炽€?    uint32_t _lastDisplay;
+// 中文逐行说明：下面这一行保留原始代码 -> };
 };
 
-// 结束头文件保护。
-#endif // ESP32_SENSOR_HUB_H
+// 缁撴潫澶存枃浠朵繚鎶ゃ€?#endif // ESP32_SENSOR_HUB_H

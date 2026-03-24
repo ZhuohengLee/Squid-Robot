@@ -1,38 +1,40 @@
-/**********************************************************************
+﻿/**********************************************************************
  * MotionLink.h
  *
- * 这个文件声明 ESP32 到 Minima 的低层执行器链路。
- * ESP32 每次发送完整执行器掩码，Minima 只负责按掩码驱动引脚。
- *********************************************************************/
+ * 杩欎釜鏂囦欢澹版槑 ESP32 鍒?Minima 鐨勪綆灞傛墽琛屽櫒閾捐矾銆? * ESP32 姣忔鍙戦€佸畬鏁存墽琛屽櫒鎺╃爜锛孧inima 鍙礋璐ｆ寜鎺╃爜椹卞姩寮曡剼銆? *********************************************************************/
 
+// 中文逐行说明：下面这一行保留原始代码 -> #ifndef ESP32_MOTION_LINK_H
 #ifndef ESP32_MOTION_LINK_H
+// 中文逐行说明：下面这一行保留原始代码 -> #define ESP32_MOTION_LINK_H
 #define ESP32_MOTION_LINK_H
 
+// 中文逐行说明：下面这一行保留原始代码 -> #include <Arduino.h>
 #include <Arduino.h>
+// 中文逐行说明：下面这一行保留原始代码 -> #include "Protocol.h"
 #include "Protocol.h"
 
+// 中文逐行说明：下面这一行保留原始代码 -> class MotionLink {
 class MotionLink {
+// 中文逐行说明：下面这一行保留原始代码 -> public:
 public:
+    // 中文逐行说明：下面这一行保留原始代码 -> MotionLink();
     MotionLink();
 
-    // 初始化和 Minima 通信的硬件串口。
-    void begin();
+    // 鍒濆鍖栧拰 Minima 閫氫俊鐨勭‖浠朵覆鍙ｃ€?    void begin();
 
-    // 下发完整执行器掩码；默认只有状态变化时才发送。
-    void applyMask(uint16_t actuatorMask, bool forceSend = false);
+    // 涓嬪彂瀹屾暣鎵ц鍣ㄦ帺鐮侊紱榛樿鍙湁鐘舵€佸彉鍖栨椂鎵嶅彂閫併€?    void applyMask(uint16_t actuatorMask, bool forceSend = false);
 
-    // 发送全局急停并清空本地记录的掩码。
-    void emergencyStop();
+    // 鍙戦€佸叏灞€鎬ュ仠骞舵竻绌烘湰鍦拌褰曠殑鎺╃爜銆?    void emergencyStop();
 
-    // 读取最近一次下发的掩码，便于调试。
-    uint16_t getLastMask() const;
+    // 璇诲彇鏈€杩戜竴娆′笅鍙戠殑鎺╃爜锛屼究浜庤皟璇曘€?    uint16_t getLastMask() const;
 
+// 中文逐行说明：下面这一行保留原始代码 -> private:
 private:
-    // 保存最近一次已经发送给 Minima 的掩码。
-    uint16_t _lastMask;
+    // 淇濆瓨鏈€杩戜竴娆″凡缁忓彂閫佺粰 Minima 鐨勬帺鐮併€?    uint16_t _lastMask;
 
-    // 通用发帧函数。
-    void sendCommand(uint8_t cmd, uint8_t data0 = 0, uint8_t data1 = 0, uint8_t data2 = 0);
+    // 閫氱敤鍙戝抚鍑芥暟銆?    void sendCommand(uint8_t cmd, uint8_t data0 = 0, uint8_t data1 = 0, uint8_t data2 = 0);
+// 中文逐行说明：下面这一行保留原始代码 -> };
 };
 
+// 中文逐行说明：下面这一行保留原始代码 -> #endif // ESP32_MOTION_LINK_H
 #endif // ESP32_MOTION_LINK_H
