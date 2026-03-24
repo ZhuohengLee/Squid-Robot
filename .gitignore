@@ -1,5 +1,6 @@
 .render/
 .tmp/
+ESP32/OtaConfig.local.h
 
 # Prerequisites
 *.d
