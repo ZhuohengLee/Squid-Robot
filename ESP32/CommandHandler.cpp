@@ -2,33 +2,35 @@
  * CommandHandler.cpp
  *
  * 这个文件实现 ESP32 侧的串口命令解析和控制模式切换逻辑。
+ * 运动并发规则如下：
+ * 1. 前进、转向、浮沉属于不同子系统，可以同时执行。
+ * 2. 左转和右转属于同一子系统，后到命令会覆盖前一条方向命令。
+ * 3. 手动浮沉会清除当前定深目标，但不会打断前进或转向。
  *********************************************************************/
 
 #include "CommandHandler.h"
 #include "StatusDisplay.h"
 
 namespace {
-// 统一清理命令字符串的首尾空白并转成小写，降低解析分支复杂度。
 String normalizeCommand(String cmd) {
     cmd.trim();
     cmd.toLowerCase();
     return cmd;
 }
 
-// 打印帮助时把当前支持的命令一次列清楚。
 void printHelp() {
     Serial.println(F("\n================ COMMAND REFERENCE ================"));
     Serial.println(F("Mode:"));
     Serial.println(F("  q                - Toggle manual/auto mode"));
     Serial.println(F(""));
     Serial.println(F("Manual motion:"));
-    Serial.println(F("  w                - Forward"));
-    Serial.println(F("  a                - Turn left"));
-    Serial.println(F("  d                - Turn right"));
+    Serial.println(F("  w                - Start/keep forward motion"));
+    Serial.println(F("  a                - Start a left turn sequence"));
+    Serial.println(F("  d                - Start a right turn sequence"));
     Serial.println(F("  j                - Ascend"));
     Serial.println(F("  k                - Descend"));
     Serial.println(F("  l<number>        - Hold a fixed depth in cm"));
-    Serial.println(F("  s                - Emergency stop and clear auto actions"));
+    Serial.println(F("  s                - Emergency stop"));
     Serial.println(F(""));
     Serial.println(F("Sensors:"));
     Serial.println(F("  c                - Calibrate current depth as zero"));
@@ -157,7 +159,7 @@ void CommandHandler::processCommand(const String& cmd) {
     }
 
     if (_mode == MODE_AUTO) {
-        Serial.println(F("AUTO mode is active. Press q to return to manual control."));
+        Serial.println(F("AUTO mode is active. Press q to return to manual mode."));
         return;
     }
 
@@ -178,13 +180,19 @@ void CommandHandler::enterManualMode() {
     if (_autoNavigator) {
         _autoNavigator->setEnabled(false);
     }
+
     if (_forwardControl) {
-        _forwardControl->stop();
+        _forwardControl->emergencyStop();
     }
-    if (_motionLink) {
-        _motionLink->stopTurn();
-        _motionLink->stopBuoyancy();
+
+    if (_leftTurnControl) {
+        _leftTurnControl->cancel();
     }
+
+    if (_rightTurnControl) {
+        _rightTurnControl->cancel();
+    }
+
     if (_depthController) {
         _depthController->clearTarget();
         _depthController->manualStop();
@@ -197,19 +205,26 @@ void CommandHandler::enterAutoMode() {
     _mode = MODE_AUTO;
 
     if (_forwardControl) {
-        _forwardControl->stop();
+        _forwardControl->emergencyStop();
     }
-    if (_motionLink) {
-        _motionLink->stopTurn();
-        _motionLink->stopBuoyancy();
+
+    if (_leftTurnControl) {
+        _leftTurnControl->cancel();
     }
+
+    if (_rightTurnControl) {
+        _rightTurnControl->cancel();
+    }
+
     if (_depthController) {
+        _depthController->manualStop();
         if (_sensorHub && _sensorHub->isHealthy()) {
             _depthController->holdCurrentDepth();
         } else {
             _depthController->clearTarget();
         }
     }
+
     if (_autoNavigator) {
         _autoNavigator->setEnabled(true);
     }
@@ -218,26 +233,25 @@ void CommandHandler::enterAutoMode() {
 }
 
 void CommandHandler::handleManualCommand(const String& cmd) {
-    if (!_motionLink || !_forwardControl || !_depthController || !_leftTurnControl || !_rightTurnControl) {
+    if (!_forwardControl || !_leftTurnControl || !_rightTurnControl || !_depthController) {
         Serial.println(F("Motion modules are not ready."));
         return;
     }
 
     if (cmd == "w" || cmd == "forward") {
         _forwardControl->start();
-        _motionLink->stopTurn();
         return;
     }
 
     if (cmd == "a" || cmd == "left") {
-        _forwardControl->stop();
-        _leftTurnControl->execute();
+        _rightTurnControl->cancel();
+        _leftTurnControl->start();
         return;
     }
 
     if (cmd == "d" || cmd == "right") {
-        _forwardControl->stop();
-        _rightTurnControl->execute();
+        _leftTurnControl->cancel();
+        _rightTurnControl->start();
         return;
     }
 
@@ -279,28 +293,36 @@ void CommandHandler::handleCalibrateCommand() {
     if (_autoNavigator) {
         _autoNavigator->setEnabled(false);
     }
+
     if (_forwardControl) {
-        _forwardControl->stop();
+        _forwardControl->emergencyStop();
     }
-    if (_motionLink) {
-        _motionLink->stopTurn();
-        _motionLink->stopBuoyancy();
+
+    if (_leftTurnControl) {
+        _leftTurnControl->cancel();
     }
+
+    if (_rightTurnControl) {
+        _rightTurnControl->cancel();
+    }
+
     if (_depthController) {
         _depthController->clearTarget();
+        _depthController->manualStop();
         _depthController->resetAfterCalibration();
     }
+
     if (_sensorHub) {
         _sensorHub->calibrateDepthZero();
     }
 
     Serial.println(F("Depth zero recalibrated."));
 
-    if (_mode == MODE_AUTO && _autoNavigator) {
+    if (_mode == MODE_AUTO && _depthController && _autoNavigator) {
         if (_sensorHub && _sensorHub->isHealthy()) {
-            if (_depthController) {
-                _depthController->holdCurrentDepth();
-            }
+            _depthController->holdCurrentDepth();
+        } else {
+            _depthController->clearTarget();
         }
         _autoNavigator->setEnabled(true);
     }
@@ -312,17 +334,26 @@ void CommandHandler::handleStopCommand() {
     if (_autoNavigator) {
         _autoNavigator->setEnabled(false);
     }
+
     if (_forwardControl) {
-        _forwardControl->stop();
+        _forwardControl->emergencyStop();
     }
-    if (_motionLink) {
-        _motionLink->emergencyStop();
-        _motionLink->stopTurn();
-        _motionLink->stopBuoyancy();
+
+    if (_leftTurnControl) {
+        _leftTurnControl->cancel();
     }
+
+    if (_rightTurnControl) {
+        _rightTurnControl->cancel();
+    }
+
     if (_depthController) {
         _depthController->clearTarget();
         _depthController->manualStop();
+    }
+
+    if (_motionLink) {
+        _motionLink->emergencyStop();
     }
 
     Serial.println(F("Emergency stop sent. Mode forced to MANUAL."));

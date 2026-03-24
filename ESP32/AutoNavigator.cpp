@@ -1,7 +1,8 @@
 /**********************************************************************
  * AutoNavigator.cpp
  *
- * 这个文件实现基于超声波的自动寻路模块。
+ * 这个文件实现基于超声波数据的自动寻路模块。
+ * 自动模式下，前进和转向由 ESP32 协调，Minima 只执行输出掩码。
  *********************************************************************/
 
 #include "AutoNavigator.h"
@@ -29,7 +30,7 @@ void AutoNavigator::begin(ForwardControl* forwardControl, LeftTurnControl* leftT
 void AutoNavigator::setEnabled(bool enabled) {
     _enabled = enabled;
     if (!enabled && _forwardControl) {
-        _forwardControl->stop();
+        _forwardControl->emergencyStop();
     }
     _decisionLockUntilMs = 0;
 }
@@ -47,13 +48,13 @@ void AutoNavigator::update(const UltrasonicManager& ultrasonicManager, uint32_t 
         return;
     }
 
-    bool frontValid = ultrasonicManager.isValid(SENSOR_FRONT);
-    bool leftValid = ultrasonicManager.isValid(SENSOR_LEFT);
-    bool rightValid = ultrasonicManager.isValid(SENSOR_RIGHT);
+    const bool frontValid = ultrasonicManager.isValid(SENSOR_FRONT);
+    const bool leftValid = ultrasonicManager.isValid(SENSOR_LEFT);
+    const bool rightValid = ultrasonicManager.isValid(SENSOR_RIGHT);
 
-    float frontCm = frontValid ? ultrasonicManager.getDistance(SENSOR_FRONT) / 10.0f : 0.0f;
-    float leftCm = leftValid ? ultrasonicManager.getDistance(SENSOR_LEFT) / 10.0f : 0.0f;
-    float rightCm = rightValid ? ultrasonicManager.getDistance(SENSOR_RIGHT) / 10.0f : 0.0f;
+    const float frontCm = frontValid ? ultrasonicManager.getDistance(SENSOR_FRONT) / 10.0f : 0.0f;
+    const float leftCm = leftValid ? ultrasonicManager.getDistance(SENSOR_LEFT) / 10.0f : 0.0f;
+    const float rightCm = rightValid ? ultrasonicManager.getDistance(SENSOR_RIGHT) / 10.0f : 0.0f;
 
     if (!frontValid) {
         _forwardControl->stop();
@@ -62,25 +63,31 @@ void AutoNavigator::update(const UltrasonicManager& ultrasonicManager, uint32_t 
 
     if (frontCm < FRONT_BLOCK_CM) {
         _forwardControl->stop();
+
         if (leftValid && (!rightValid || leftCm >= rightCm + SIDE_PREFERENCE_CM)) {
-            _leftTurnControl->execute();
+            _rightTurnControl->cancel();
+            _leftTurnControl->start();
         } else {
-            _rightTurnControl->execute();
+            _leftTurnControl->cancel();
+            _rightTurnControl->start();
         }
+
         _decisionLockUntilMs = nowMs + TURN_LOCK_MS;
         return;
     }
 
     if (leftValid && leftCm < SIDE_NEAR_CM && (!rightValid || rightCm > leftCm + SIDE_PREFERENCE_CM)) {
         _forwardControl->stop();
-        _rightTurnControl->execute();
+        _leftTurnControl->cancel();
+        _rightTurnControl->start();
         _decisionLockUntilMs = nowMs + TURN_LOCK_MS;
         return;
     }
 
     if (rightValid && rightCm < SIDE_NEAR_CM && (!leftValid || leftCm > rightCm + SIDE_PREFERENCE_CM)) {
         _forwardControl->stop();
-        _leftTurnControl->execute();
+        _rightTurnControl->cancel();
+        _leftTurnControl->start();
         _decisionLockUntilMs = nowMs + TURN_LOCK_MS;
         return;
     }

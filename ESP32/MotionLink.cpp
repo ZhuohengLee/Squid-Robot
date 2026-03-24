@@ -1,13 +1,39 @@
 /**********************************************************************
  * MotionLink.cpp
  *
- * 这个文件实现 ESP32 到 Minima 的运动命令发送接口。
+ * 这个文件实现 ESP32 到 Minima 的执行器位掩码发送。
  *********************************************************************/
 
 #include "MotionLink.h"
 
+MotionLink::MotionLink()
+    : _lastMask(0) {}
+
 void MotionLink::begin() {
     UART_TO_MINIMA.begin(UART_BAUD_RATE, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
+}
+
+void MotionLink::applyMask(uint16_t actuatorMask, bool forceSend) {
+    if (!forceSend && actuatorMask == _lastMask) {
+        return;
+    }
+
+    sendCommand(
+        CMD_SET_ACTUATORS,
+        static_cast<uint8_t>(actuatorMask & 0xFF),
+        static_cast<uint8_t>((actuatorMask >> 8) & 0xFF),
+        0
+    );
+    _lastMask = actuatorMask;
+}
+
+void MotionLink::emergencyStop() {
+    sendCommand(CMD_EMERGENCY_STOP);
+    _lastMask = 0;
+}
+
+uint16_t MotionLink::getLastMask() const {
+    return _lastMask;
 }
 
 void MotionLink::sendCommand(uint8_t cmd, uint8_t data0, uint8_t data1, uint8_t data2) {
@@ -21,40 +47,4 @@ void MotionLink::sendCommand(uint8_t cmd, uint8_t data0, uint8_t data1, uint8_t 
     frame[6] = calculateCRC8(&frame[2], 4);
     frame[7] = FRAME_TAIL;
     UART_TO_MINIMA.write(frame, FRAME_LENGTH);
-}
-
-void MotionLink::startForward() {
-    sendCommand(CMD_FORWARD_START);
-}
-
-void MotionLink::stopForward() {
-    sendCommand(CMD_FORWARD_STOP);
-}
-
-void MotionLink::turnLeft() {
-    sendCommand(CMD_TURN_LEFT);
-}
-
-void MotionLink::turnRight() {
-    sendCommand(CMD_TURN_RIGHT);
-}
-
-void MotionLink::stopTurn() {
-    sendCommand(CMD_TURN_STOP);
-}
-
-void MotionLink::ascend() {
-    sendCommand(CMD_ASCEND);
-}
-
-void MotionLink::descend() {
-    sendCommand(CMD_DESCEND);
-}
-
-void MotionLink::stopBuoyancy() {
-    sendCommand(CMD_BUOYANCY_STOP);
-}
-
-void MotionLink::emergencyStop() {
-    sendCommand(CMD_EMERGENCY_STOP);
 }

@@ -1,7 +1,8 @@
 /**********************************************************************
  * DepthController.cpp
  *
- * 这个文件实现深度滤波和深度控制模块。
+ * 这个文件实现定深和浮沉控制。
+ * 深度控制只管理浮沉子系统，不和前进、转向子系统抢状态。
  *********************************************************************/
 
 #include "DepthController.h"
@@ -13,11 +14,14 @@ constexpr float SPEED_LIMIT_CM_S = 0.8f;
 constexpr float SYSTEM_TAU = 2.7f;
 constexpr float CONTROL_TRIGGER = 15.0f;
 constexpr uint32_t BUOYANCY_COOLDOWN_MS = 1700;
+constexpr uint32_t ASCEND_DURATION_MS = 1500;
+constexpr uint32_t DESCEND_DURATION_MS = 1500;
 }
 
 DepthController::DepthController()
-    : _motionLink(nullptr),
-      _holdingTarget(false),
+    : _holdingTarget(false),
+      _ascendActive(false),
+      _descendActive(false),
       _targetDepthCm(0.0f),
       _depthFilt(0.0f),
       _speedCmS(0.0f),
@@ -28,38 +32,44 @@ DepthController::DepthController()
       _kp(120.0f),
       _ki(1.2f),
       _kd(150.0f),
-      _lastUpdateMs(0),
-      _lastBuoyancyCmdMs(0) {}
+      _lastBuoyancyCmdMs(0),
+      _ascendStartMs(0),
+      _descendStartMs(0),
+      _lastControlUpdateMs(0) {}
 
-void DepthController::begin(MotionLink* motionLink) {
-    _motionLink = motionLink;
+void DepthController::begin() {
+    resetAfterCalibration();
 }
 
-void DepthController::update(bool depthValid, float rawDepthCm, uint32_t nowMs) {
+void DepthController::update(bool depthValid, float filteredDepthCm, float depthSpeedCmS, uint32_t nowMs) {
+    if (_ascendActive && nowMs - _ascendStartMs >= ASCEND_DURATION_MS) {
+        _ascendActive = false;
+    }
+
+    if (_descendActive && nowMs - _descendStartMs >= DESCEND_DURATION_MS) {
+        _descendActive = false;
+    }
+
     if (!depthValid) {
         return;
     }
 
-    if (_lastUpdateMs == 0) {
-        _lastUpdateMs = nowMs;
-        _kalman.reset(rawDepthCm, 0.0f);
-        _depthFilt = rawDepthCm;
-        _speedCmS = 0.0f;
+    _depthFilt = filteredDepthCm;
+    _speedCmS = depthSpeedCmS;
+
+    if (_lastControlUpdateMs == 0) {
+        _lastControlUpdateMs = nowMs;
         return;
     }
 
-    float dt = static_cast<float>(nowMs - _lastUpdateMs) * 0.001f;
-    if (dt < 0.01f) {
-        dt = 0.01f;
+    float dt = static_cast<float>(nowMs - _lastControlUpdateMs) * 0.001f;
+    if (dt < 0.02f) {
+        return;
     }
     if (dt > 0.20f) {
         dt = 0.20f;
     }
-    _lastUpdateMs = nowMs;
-
-    _kalman.update(rawDepthCm, dt);
-    _depthFilt = _kalman.getPosition();
-    _speedCmS = _kalman.getVelocity();
+    _lastControlUpdateMs = nowMs;
 
     if (!_holdingTarget) {
         return;
@@ -67,29 +77,35 @@ void DepthController::update(bool depthValid, float rawDepthCm, uint32_t nowMs) 
 
     if (_targetDepthCm < 0.0f || _depthFilt >= MAX_DEPTH_CM) {
         clearTarget();
+        manualStop();
         return;
     }
 
-    float err = _targetDepthCm - _depthFilt;
+    // 正在执行浮沉脉冲时，不重复下发新的浮沉动作。
+    if (_ascendActive || _descendActive) {
+        return;
+    }
+
+    const float err = _targetDepthCm - _depthFilt;
     adaptivePID(err, _speedCmS);
 
-    float pTerm = _kp * err;
-    float dTerm = _kd * (-_speedCmS);
+    const float pTerm = _kp * err;
+    const float dTerm = _kd * (-_speedCmS);
     float u = pTerm + _ki * _integ + dTerm;
 
     speedLimiter(u, err);
 
-    float uFinal = constrain(u, -100.0f, 100.0f);
-    bool isSaturated = (uFinal >= 100.0f && err > 0.0f) || (uFinal <= -100.0f && err < 0.0f);
+    const float uFinal = constrain(u, -100.0f, 100.0f);
+    const bool isSaturated =
+        (uFinal >= 100.0f && err > 0.0f) ||
+        (uFinal <= -100.0f && err < 0.0f);
+
     if (!isSaturated) {
         _integ += err * dt;
     }
     _integ = constrain(_integ, -100.0f, 100.0f);
 
     if (fabs(err) <= DEADBAND_CM || fabs(uFinal) < CONTROL_TRIGGER) {
-        if (_motionLink) {
-            _motionLink->stopBuoyancy();
-        }
         return;
     }
 
@@ -97,14 +113,10 @@ void DepthController::update(bool depthValid, float rawDepthCm, uint32_t nowMs) 
         return;
     }
 
-    if (_motionLink) {
-        if (uFinal > 0.0f) {
-            _motionLink->descend();
-            _lastBuoyancyCmdMs = nowMs;
-        } else if (uFinal < 0.0f) {
-            _motionLink->ascend();
-            _lastBuoyancyCmdMs = nowMs;
-        }
+    if (uFinal > 0.0f) {
+        startDescendPulse(nowMs);
+    } else {
+        startAscendPulse(nowMs);
     }
 }
 
@@ -124,9 +136,6 @@ void DepthController::clearTarget() {
     _holdingTarget = false;
     _targetDepthCm = 0.0f;
     _integ = 0.0f;
-    if (_motionLink) {
-        _motionLink->stopBuoyancy();
-    }
 }
 
 bool DepthController::isHoldingTarget() const {
@@ -135,34 +144,33 @@ bool DepthController::isHoldingTarget() const {
 
 void DepthController::manualAscend() {
     clearTarget();
-    if (_motionLink) {
-        _motionLink->ascend();
-        _lastBuoyancyCmdMs = millis();
-    }
+    startAscendPulse(millis());
 }
 
 void DepthController::manualDescend() {
     clearTarget();
-    if (_motionLink) {
-        _motionLink->descend();
-        _lastBuoyancyCmdMs = millis();
-    }
+    startDescendPulse(millis());
 }
 
 void DepthController::manualStop() {
-    clearTarget();
-    if (_motionLink) {
-        _motionLink->stopBuoyancy();
-    }
+    _ascendActive = false;
+    _descendActive = false;
+    _ascendStartMs = 0;
+    _descendStartMs = 0;
 }
 
 void DepthController::resetAfterCalibration() {
-    _kalman.reset(0.0f, 0.0f);
+    _holdingTarget = false;
+    _ascendActive = false;
+    _descendActive = false;
+    _targetDepthCm = 0.0f;
     _depthFilt = 0.0f;
     _speedCmS = 0.0f;
     _integ = 0.0f;
-    _lastUpdateMs = 0;
     _lastBuoyancyCmdMs = 0;
+    _ascendStartMs = 0;
+    _descendStartMs = 0;
+    _lastControlUpdateMs = 0;
 }
 
 float DepthController::getFilteredDepthCm() const {
@@ -177,9 +185,21 @@ float DepthController::getTargetDepthCm() const {
     return _targetDepthCm;
 }
 
+uint16_t DepthController::getMask() const {
+    if (_ascendActive) {
+        return ACT_BUOYANCY_PUMP;
+    }
+
+    if (_descendActive) {
+        return ACT_BUOYANCY_PUMP | ACT_BUOYANCY_VALVE_H | ACT_BUOYANCY_VALVE_I;
+    }
+
+    return 0;
+}
+
 void DepthController::adaptivePID(float err, float spd) {
-    float aErr = fabs(err);
-    float aSpd = fabs(spd);
+    const float aErr = fabs(err);
+    const float aSpd = fabs(spd);
 
     if (aErr > 15.0f) {
         _kp = _kpBase * 2.0f;
@@ -237,4 +257,18 @@ void DepthController::speedLimiter(float& u, float err) {
             u = fabs(u) * 1.2f;
         }
     }
+}
+
+void DepthController::startAscendPulse(uint32_t nowMs) {
+    _descendActive = false;
+    _ascendActive = true;
+    _ascendStartMs = nowMs;
+    _lastBuoyancyCmdMs = nowMs;
+}
+
+void DepthController::startDescendPulse(uint32_t nowMs) {
+    _ascendActive = false;
+    _descendActive = true;
+    _descendStartMs = nowMs;
+    _lastBuoyancyCmdMs = nowMs;
 }
