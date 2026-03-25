@@ -43,15 +43,21 @@ OtaManager otaManager;
 CommandHandler cmdHandler;
 StatusDisplay statusDisplay;
 
+namespace {
+constexpr uint32_t STARTUP_DEPTH_CALIBRATION_DELAY_MS = 2000;
+bool gStartupDepthCalibrationDone = false;
+}
+
 // 打印当前系统拓扑，方便串口检查运行模式。
 static void printWelcome() {
     Serial.println(F("\nESP32-S3 Main Controller"));
     Serial.println(F("---------------------------------------------"));
     Serial.println(F("Sensor topology:"));
-    Serial.println(F("  MS5837        -> Minima I2C (A4/A5) -> UART feedback"));
+    Serial.println(F("  MS5837        -> ESP32 I2C (SDA=IO4, SCL=IO5, 400kHz)"));
     Serial.println(F("  CH9434A UART1 -> Front ultrasonic"));
     Serial.println(F("  CH9434A UART2 -> Left ultrasonic"));
-    Serial.println(F("  CH9434A UART3 -> Right ultrasonic"));
+    Serial.println(F("  CH9434A UART0 -> Right ultrasonic"));
+    Serial.println(F("  CH9434A UART3 -> Unused"));
     Serial.println(F("Control topology:"));
     Serial.println(F("  ESP32         -> Timing / Kalman / Auto nav"));
     Serial.println(F("  Minima        -> Pure actuator executor"));
@@ -82,6 +88,21 @@ static void stayAliveForOta() {
     }
 }
 
+static void handleStartupDepthCalibration(uint32_t nowMs) {
+    if (gStartupDepthCalibrationDone || nowMs < STARTUP_DEPTH_CALIBRATION_DELAY_MS) {
+        return;
+    }
+
+    if (!depthMgr.isValid()) {
+        return;
+    }
+
+    sensorHub.calibrateDepthZero();
+    depthController.resetAfterCalibration();
+    gStartupDepthCalibrationDone = true;
+    Serial.println(F("Startup depth auto-calibration complete."));
+}
+
 void setup() {
     Serial.begin(115200);
     delay(1500);
@@ -99,7 +120,7 @@ void setup() {
     }
     Serial.println(F("OK"));
 
-    Serial.print(F("Initializing depth feedback link... "));
+    Serial.print(F("Initializing MS5837 depth sensor... "));
     if (depthMgr.begin()) {
         Serial.println(F("OK"));
     } else {
@@ -132,7 +153,6 @@ void setup() {
     cmdHandler.setRightTurnControl(&rightTurnControl);
     cmdHandler.setDepthController(&depthController);
     cmdHandler.setAutoNavigator(&autoNavigator);
-    statusDisplay.setDepthSensorManager(&depthMgr);
 
     Serial.println(F("System ready. Type h for commands.\n"));
 }
@@ -144,6 +164,7 @@ void loop() {
 
     depthMgr.update();
     ultrasonicMgr.update();
+    handleStartupDepthCalibration(nowMs);
 
     autoNavigator.update(ultrasonicMgr, nowMs);
     depthController.update(depthMgr.isValid(), depthMgr.getDepthCm(), depthMgr.getDepthSpeedCmS(), nowMs);

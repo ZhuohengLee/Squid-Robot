@@ -23,10 +23,18 @@
 #define SPI_CS                10
 #define CH9434A_INT           14
 
+// MS5837 depth sensor is wired directly to the ESP32 I2C bus.
+// Keep this mapping fixed unless the hardware wiring is changed:
+// SDA -> IO4, SCL -> IO5, address -> 0x76.
+#define DEPTH_I2C_ADDRESS     0x76
+#define DEPTH_I2C_SDA         4
+#define DEPTH_I2C_SCL         5
+#define DEPTH_I2C_FREQ        400000
+
 // CH9434A 的 UART 通道分配。
 #define ULTRASONIC_FRONT_UART 1
 #define ULTRASONIC_LEFT_UART  2
-#define ULTRASONIC_RIGHT_UART 3
+#define ULTRASONIC_RIGHT_UART 0
 
 // 固定长度协议帧格式。
 #define FRAME_HEADER          0xAA
