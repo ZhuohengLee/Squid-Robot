@@ -35,6 +35,8 @@ public:
     void displayCompact();
     // 声明执行传感器健康检查的函数。
     bool isHealthy() const;
+    bool hasDepthSensor() const;
+    bool isDepthOnline() const;
     // 声明返回当前有效传感器数量的函数。
     uint8_t getSensorCount() const;
 

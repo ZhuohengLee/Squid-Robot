@@ -23,6 +23,14 @@ struct UltrasonicData {
 
 class UltrasonicManager {
 public:
+    enum DebugStatus : uint8_t {
+        DEBUG_NO_DATA = 0,
+        DEBUG_SHORT_FRAME,
+        DEBUG_BAD_CHECKSUM,
+        DEBUG_OUT_OF_RANGE,
+        DEBUG_VALID_FRAME
+    };
+
     explicit UltrasonicManager(CH9434A* ch9434);
 
     bool begin();
@@ -33,6 +41,7 @@ public:
     bool isValid(uint8_t sensor) const;
     uint32_t getLastUpdate(uint8_t sensor) const;
     void getAllDistances(uint16_t* distances) const;
+    void printDebug() const;
 
     void reset(uint8_t sensor);
     void resetAll();
@@ -45,6 +54,10 @@ private:
     uint32_t _lastTrigger[NUM_ULTRASONIC];
     uint32_t _lastFilterUpdate[NUM_ULTRASONIC];
     uint32_t _lastScanTime;
+    uint32_t _rxByteCount[NUM_ULTRASONIC];
+    uint8_t _lastRxBuffer[NUM_ULTRASONIC][10];
+    uint8_t _lastRxLength[NUM_ULTRASONIC];
+    DebugStatus _lastDebugStatus[NUM_ULTRASONIC];
 
     bool readSensor(uint8_t sensor);
     void triggerMeasurement(uint8_t sensor);

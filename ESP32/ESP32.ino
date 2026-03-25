@@ -28,7 +28,7 @@
 #include "UltrasonicManager.h"
 
 CH9434A ch9434(SPI_CS, CH9434A_INT);
-DepthSensorManager depthMgr(&ch9434, DEPTH_UART_CHANNEL);
+DepthSensorManager depthMgr;
 UltrasonicManager ultrasonicMgr(&ch9434);
 SensorHub sensorHub;
 
@@ -48,7 +48,7 @@ static void printWelcome() {
     Serial.println(F("\nESP32-S3 Main Controller"));
     Serial.println(F("---------------------------------------------"));
     Serial.println(F("Sensor topology:"));
-    Serial.println(F("  CH9434A UART0 -> Depth sensor"));
+    Serial.println(F("  MS5837        -> Minima I2C (A4/A5) -> UART feedback"));
     Serial.println(F("  CH9434A UART1 -> Front ultrasonic"));
     Serial.println(F("  CH9434A UART2 -> Left ultrasonic"));
     Serial.println(F("  CH9434A UART3 -> Right ultrasonic"));
@@ -99,7 +99,7 @@ void setup() {
     }
     Serial.println(F("OK"));
 
-    Serial.print(F("Initializing depth sensor UART... "));
+    Serial.print(F("Initializing depth feedback link... "));
     if (depthMgr.begin()) {
         Serial.println(F("OK"));
     } else {
@@ -132,6 +132,7 @@ void setup() {
     cmdHandler.setRightTurnControl(&rightTurnControl);
     cmdHandler.setDepthController(&depthController);
     cmdHandler.setAutoNavigator(&autoNavigator);
+    statusDisplay.setDepthSensorManager(&depthMgr);
 
     Serial.println(F("System ready. Type h for commands.\n"));
 }
@@ -152,5 +153,6 @@ void loop() {
 
     motionLink.applyMask(composeActuatorMask());
     statusDisplay.processMinimaFeedback();
+    sensorHub.displayAll();
     otaManager.handle();
 }

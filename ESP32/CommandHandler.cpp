@@ -218,7 +218,7 @@ void CommandHandler::enterAutoMode() {
 
     if (_depthController) {
         _depthController->manualStop();
-        if (_sensorHub && _sensorHub->isHealthy()) {
+        if (_sensorHub && _sensorHub->isDepthOnline()) {
             _depthController->holdCurrentDepth();
         } else {
             _depthController->clearTarget();
@@ -316,10 +316,14 @@ void CommandHandler::handleCalibrateCommand() {
         _sensorHub->calibrateDepthZero();
     }
 
+    if (_motionLink) {
+        _motionLink->requestDepthZeroCalibration();
+    }
+
     Serial.println(F("Depth zero recalibrated."));
 
     if (_mode == MODE_AUTO && _depthController && _autoNavigator) {
-        if (_sensorHub && _sensorHub->isHealthy()) {
+        if (_sensorHub && _sensorHub->isDepthOnline()) {
             _depthController->holdCurrentDepth();
         } else {
             _depthController->clearTarget();

@@ -9,12 +9,14 @@
  *********************************************************************/
 
 #include <Arduino.h>
+#include "DepthSensorLink.h"
 #include "MotionControl.h"
 #include "Protocol.h"
 
 #define UART_FROM_ESP32 Serial1
 
 MotionController motion;
+DepthSensorLink depthSensor;
 ProtocolReceiver protocolReceiver;
 
 unsigned long tStatus = 0;
@@ -63,6 +65,10 @@ static void executeCommand(uint8_t cmd, uint8_t data0, uint8_t data1, uint8_t da
             motion.emergencyStopAll();
             break;
 
+        case CMD_CALIBRATE_DEPTH_ZERO:
+            depthSensor.calibrateZero();
+            break;
+
         default:
             Serial.print(F("Unknown command: 0x"));
             Serial.println(cmd, HEX);
@@ -89,6 +95,7 @@ void setup() {
     Serial.println(F("============================================"));
 
     motion.begin();
+    depthSensor.begin();
     Serial.println(F("Actuator executor ready.\n"));
 }
 
@@ -96,6 +103,19 @@ void loop() {
     const unsigned long now = millis();
 
     processESP32Command();
+    depthSensor.update();
+
+    int16_t depthMm = 0;
+    int8_t temperatureC = 0;
+    if (depthSensor.fetchLatest(depthMm, temperatureC)) {
+        const int16_t encodedTemp = constrain(static_cast<int16_t>(temperatureC) + 40, 0, 255);
+        sendStatusToESP32(
+            STATUS_DEPTH,
+            static_cast<uint8_t>(depthMm & 0xFF),
+            static_cast<uint8_t>((depthMm >> 8) & 0xFF),
+            static_cast<uint8_t>(encodedTemp)
+        );
+    }
 
     if (now - tStatus >= STATUS_INTERVAL) {
         tStatus = now;

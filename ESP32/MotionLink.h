@@ -23,6 +23,7 @@ public:
 
     // 发送全局急停并清空本地记录的掩码。
     void emergencyStop();
+    void requestDepthZeroCalibration();
 
     // 读取最近一次下发的掩码，便于调试。
     uint16_t getLastMask() const;

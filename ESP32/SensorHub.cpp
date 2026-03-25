@@ -71,6 +71,8 @@ void SensorHub::displayAll() {
         Serial.print(_depthMgr->getTemperatureC(), 1);
         // 打印温度单位。
         Serial.println(F(" C"));
+    } else if (!_depthMgr) {
+        Serial.println(F("disabled"));
     } else {
         // 如果深度数据无效，就打印离线状态。
         Serial.println(F("offline"));
@@ -101,6 +103,14 @@ void SensorHub::displayAll() {
     }
 
     // 打印显示尾部。
+    if (_depthMgr) {
+        _depthMgr->printDebug();
+    }
+
+    if (_ultrasonicMgr) {
+        _ultrasonicMgr->printDebug();
+    }
+
     Serial.println(F("=============================================\n"));
 }
 
@@ -148,7 +158,7 @@ void SensorHub::displayCompact() {
 // 实现健康检查函数。
 bool SensorHub::isHealthy() const {
     // 判断深度传感器是否在线。
-    const bool depthOk = _depthMgr && _depthMgr->isValid();
+    const bool depthOk = !_depthMgr || _depthMgr->isValid();
     // 初始化有效超声波数量计数器。
     uint8_t ultrasonicOk = 0;
 
@@ -166,6 +176,14 @@ bool SensorHub::isHealthy() const {
 
     // 只有深度在线且至少 2 路超声波有效，才认为系统健康。
     return depthOk && ultrasonicOk >= 2;
+}
+
+bool SensorHub::hasDepthSensor() const {
+    return _depthMgr != nullptr;
+}
+
+bool SensorHub::isDepthOnline() const {
+    return _depthMgr && _depthMgr->isValid();
 }
 
 // 实现有效传感器数量统计函数。

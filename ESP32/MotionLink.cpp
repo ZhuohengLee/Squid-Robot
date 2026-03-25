@@ -32,6 +32,10 @@ void MotionLink::emergencyStop() {
     _lastMask = 0;
 }
 
+void MotionLink::requestDepthZeroCalibration() {
+    sendCommand(CMD_CALIBRATE_DEPTH_ZERO);
+}
+
 uint16_t MotionLink::getLastMask() const {
     return _lastMask;
 }

@@ -8,7 +8,7 @@
 
 namespace {
 // 前进阀门交替开关周期。
-constexpr uint32_t FORWARD_VALVE_INTERVAL_MS = 600;
+constexpr uint32_t FORWARD_VALVE_INTERVAL_MS = 900;
 
 // 停止前进后的平衡时间窗口。
 constexpr uint32_t FORWARD_BALANCE_TIME_MS = 500;

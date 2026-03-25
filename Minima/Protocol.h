@@ -18,9 +18,11 @@
 
 #define CMD_SET_ACTUATORS     0x01
 #define CMD_EMERGENCY_STOP    0x02
+#define CMD_CALIBRATE_DEPTH_ZERO 0x03
 
 #define STATUS_MOTION         0x81
 #define STATUS_HEARTBEAT      0x82
+#define STATUS_DEPTH          0x83
 
 constexpr uint16_t ACT_FORWARD_PUMP     = 0x0001;
 constexpr uint16_t ACT_FORWARD_VALVE_B  = 0x0002;

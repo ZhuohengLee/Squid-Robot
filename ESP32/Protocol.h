@@ -24,7 +24,6 @@
 #define CH9434A_INT           14
 
 // CH9434A 的 UART 通道分配。
-#define DEPTH_UART_CHANNEL    0
 #define ULTRASONIC_FRONT_UART 1
 #define ULTRASONIC_LEFT_UART  2
 #define ULTRASONIC_RIGHT_UART 3
@@ -37,16 +36,17 @@
 // 当前只保留两个控制命令：设置执行器输出和全局急停。
 #define CMD_SET_ACTUATORS     0x01
 #define CMD_EMERGENCY_STOP    0x02
+#define CMD_CALIBRATE_DEPTH_ZERO 0x03
 
 // Minima 回传的状态帧命令号。
 #define STATUS_MOTION         0x81
 #define STATUS_HEARTBEAT      0x82
+#define STATUS_DEPTH          0x83
 
 // 传感器数量和串口参数。
 #define NUM_ULTRASONIC        3
 #define ULTRASONIC_BAUDRATE   115200
 #define ULTRASONIC_TIMEOUT    30
-#define DEPTH_UART_BAUDRATE   9600
 
 // 超声波逻辑编号。
 #define SENSOR_FRONT          0

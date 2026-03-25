@@ -5,6 +5,7 @@
  *********************************************************************/
 
 #include "UltrasonicManager.h"
+#include <cstring>
 
 namespace {
 constexpr uint32_t SCAN_INTERVAL_MS = 100;
@@ -15,6 +16,23 @@ const uint8_t UART_CHANNELS[NUM_ULTRASONIC] = {
     ULTRASONIC_LEFT_UART,
     ULTRASONIC_RIGHT_UART,
 };
+
+const char* debugStatusToString(UltrasonicManager::DebugStatus status) {
+    switch (status) {
+        case UltrasonicManager::DEBUG_NO_DATA:
+            return "no_data";
+        case UltrasonicManager::DEBUG_SHORT_FRAME:
+            return "short_frame";
+        case UltrasonicManager::DEBUG_BAD_CHECKSUM:
+            return "bad_checksum";
+        case UltrasonicManager::DEBUG_OUT_OF_RANGE:
+            return "out_of_range";
+        case UltrasonicManager::DEBUG_VALID_FRAME:
+            return "valid";
+        default:
+            return "unknown";
+    }
+}
 }
 
 UltrasonicManager::UltrasonicManager(CH9434A* ch9434)
@@ -45,17 +63,18 @@ bool UltrasonicManager::begin() {
 }
 
 void UltrasonicManager::update() {
-    const uint32_t now = millis();
-    if (now - _lastScanTime < SCAN_INTERVAL_MS) {
+    const uint32_t scanNow = millis();
+    if (scanNow - _lastScanTime < SCAN_INTERVAL_MS) {
         return;
     }
 
-    _lastScanTime = now;
+    _lastScanTime = scanNow;
 
     for (uint8_t sensor = 0; sensor < NUM_ULTRASONIC; ++sensor) {
         readSensor(sensor);
 
-        if (now - _sensors[sensor].lastUpdate > DATA_TIMEOUT_MS) {
+        const uint32_t now = millis();
+        if (_sensors[sensor].lastUpdate == 0 || now - _sensors[sensor].lastUpdate > DATA_TIMEOUT_MS) {
             _sensors[sensor].valid = false;
             _filterInitialized[sensor] = false;
         }
@@ -84,6 +103,36 @@ void UltrasonicManager::getAllDistances(uint16_t* distances) const {
     }
 }
 
+void UltrasonicManager::printDebug() const {
+    for (uint8_t sensor = 0; sensor < NUM_ULTRASONIC; ++sensor) {
+        const uint8_t uart = getUartChannel(sensor);
+        Serial.print(F("US UART"));
+        Serial.print(uart);
+        Serial.print(F(" ("));
+        Serial.print(sensor);
+        Serial.print(F("): LSR=0x"));
+        Serial.print(_ch9434 ? _ch9434->getLineStatus(uart) : 0, HEX);
+        Serial.print(F(" | bytes="));
+        Serial.print(_rxByteCount[sensor]);
+        Serial.print(F(" | err="));
+        Serial.print(_sensors[sensor].errorCount);
+        Serial.print(F(" | last_len="));
+        Serial.print(_lastRxLength[sensor]);
+        Serial.print(F(" | status="));
+        Serial.println(debugStatusToString(_lastDebugStatus[sensor]));
+
+        Serial.print(F("  Last RX : "));
+        for (uint8_t i = 0; i < _lastRxLength[sensor]; ++i) {
+            if (_lastRxBuffer[sensor][i] < 0x10) {
+                Serial.print('0');
+            }
+            Serial.print(_lastRxBuffer[sensor][i], HEX);
+            Serial.print(' ');
+        }
+        Serial.println();
+    }
+}
+
 void UltrasonicManager::reset(uint8_t sensor) {
     if (sensor >= NUM_ULTRASONIC) {
         return;
@@ -97,6 +146,10 @@ void UltrasonicManager::reset(uint8_t sensor) {
     _filterInitialized[sensor] = false;
     _lastTrigger[sensor] = 0;
     _lastFilterUpdate[sensor] = 0;
+    _rxByteCount[sensor] = 0;
+    _lastRxLength[sensor] = 0;
+    _lastDebugStatus[sensor] = DEBUG_NO_DATA;
+    memset(_lastRxBuffer[sensor], 0, sizeof(_lastRxBuffer[sensor]));
     _filters[sensor].reset();
     _ch9434->flush(getUartChannel(sensor));
 }
@@ -111,6 +164,10 @@ void UltrasonicManager::resetAll() {
         _filterInitialized[sensor] = false;
         _lastTrigger[sensor] = 0;
         _lastFilterUpdate[sensor] = 0;
+        _rxByteCount[sensor] = 0;
+        _lastRxLength[sensor] = 0;
+        _lastDebugStatus[sensor] = DEBUG_NO_DATA;
+        memset(_lastRxBuffer[sensor], 0, sizeof(_lastRxBuffer[sensor]));
         _filters[sensor].reset();
     }
 }
@@ -148,7 +205,17 @@ bool UltrasonicManager::readSensor(uint8_t sensor) {
         delayMicroseconds(100);
     }
 
+    _rxByteCount[sensor] += bytesRead;
+    _lastRxLength[sensor] = bytesRead;
+    if (bytesRead > 0) {
+        memcpy(_lastRxBuffer[sensor], buffer, bytesRead);
+    }
+    for (uint8_t i = bytesRead; i < sizeof(_lastRxBuffer[sensor]); ++i) {
+        _lastRxBuffer[sensor][i] = 0;
+    }
+
     if (bytesRead < 4) {
+        _lastDebugStatus[sensor] = bytesRead == 0 ? DEBUG_NO_DATA : DEBUG_SHORT_FRAME;
         ++_sensors[sensor].errorCount;
         return false;
     }
@@ -162,15 +229,19 @@ bool UltrasonicManager::readSensor(uint8_t sensor) {
     }
 
     if (frameStart < 0 || !validateFrame(&buffer[frameStart])) {
+        _lastDebugStatus[sensor] = DEBUG_BAD_CHECKSUM;
         ++_sensors[sensor].errorCount;
         return false;
     }
 
     const uint16_t rawDistanceMm = parseDistance(&buffer[frameStart]);
     if (rawDistanceMm < 50 || rawDistanceMm > 3000) {
+        _lastDebugStatus[sensor] = DEBUG_OUT_OF_RANGE;
         ++_sensors[sensor].errorCount;
         return false;
     }
+
+    _lastDebugStatus[sensor] = DEBUG_VALID_FRAME;
 
     const float rawDistanceCm = rawDistanceMm / 10.0f;
     float filteredDistanceCm = rawDistanceCm;

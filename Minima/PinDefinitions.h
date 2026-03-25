@@ -9,12 +9,12 @@
 #define MINIMA_PIN_DEFINITIONS_H
 
 #define PUMP_A_PIN      2
-#define VALVE_B_PIN     3
-#define VALVE_C_PIN     4
+#define VALVE_B_PIN     6
+#define VALVE_C_PIN     7
 
 #define PUMP_D_PIN      5
-#define VALVE_E_PIN     6
-#define VALVE_F_PIN     7
+#define VALVE_E_PIN     3
+#define VALVE_F_PIN     4
 
 #define PUMP_G_PIN      8
 #define VALVE_H_PIN     9
