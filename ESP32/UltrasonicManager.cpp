@@ -8,7 +8,8 @@
 #include <cstring>
 
 namespace {
-constexpr uint32_t SCAN_INTERVAL_MS = 100;
+constexpr uint32_t SCAN_INTERVAL_MS = 5;
+constexpr uint32_t RESPONSE_WAIT_MS = 80;
 constexpr uint32_t DATA_TIMEOUT_MS = 2000;
 
 const uint8_t UART_CHANNELS[NUM_ULTRASONIC] = {
@@ -37,7 +38,9 @@ const char* debugStatusToString(UltrasonicManager::DebugStatus status) {
 
 UltrasonicManager::UltrasonicManager(CH9434A* ch9434)
     : _ch9434(ch9434),
-      _lastScanTime(0) {
+      _lastScanTime(0),
+      _currentSensor(0),
+      _waitingForResponse(false) {
     resetAll();
 }
 
@@ -71,14 +74,26 @@ void UltrasonicManager::update() {
     _lastScanTime = scanNow;
 
     for (uint8_t sensor = 0; sensor < NUM_ULTRASONIC; ++sensor) {
-        readSensor(sensor);
-
-        const uint32_t now = millis();
-        if (_sensors[sensor].lastUpdate == 0 || now - _sensors[sensor].lastUpdate > DATA_TIMEOUT_MS) {
+        if (_sensors[sensor].lastUpdate == 0 || scanNow - _sensors[sensor].lastUpdate > DATA_TIMEOUT_MS) {
             _sensors[sensor].valid = false;
             _filterInitialized[sensor] = false;
         }
     }
+
+    if (!_waitingForResponse) {
+        triggerMeasurement(_currentSensor);
+        _lastTrigger[_currentSensor] = scanNow;
+        _waitingForResponse = true;
+        return;
+    }
+
+    if (scanNow - _lastTrigger[_currentSensor] < RESPONSE_WAIT_MS) {
+        return;
+    }
+
+    readSensor(_currentSensor);
+    _currentSensor = static_cast<uint8_t>((_currentSensor + 1) % NUM_ULTRASONIC);
+    _waitingForResponse = false;
 }
 
 uint16_t UltrasonicManager::getDistance(uint8_t sensor) const {
@@ -155,6 +170,8 @@ void UltrasonicManager::reset(uint8_t sensor) {
 }
 
 void UltrasonicManager::resetAll() {
+    _currentSensor = 0;
+    _waitingForResponse = false;
     for (uint8_t sensor = 0; sensor < NUM_ULTRASONIC; ++sensor) {
         _sensors[sensor].rawDistanceMm = 0;
         _sensors[sensor].filteredDistanceMm = 0;
@@ -180,13 +197,8 @@ bool UltrasonicManager::readSensor(uint8_t sensor) {
     const uint8_t uart = getUartChannel(sensor);
     const uint32_t now = millis();
 
-    if (now - _lastTrigger[sensor] > 50) {
-        triggerMeasurement(sensor);
-        _lastTrigger[sensor] = now;
-        delay(20);
-    }
-
     if (_ch9434->available(uart) == 0) {
+        _lastDebugStatus[sensor] = DEBUG_NO_DATA;
         if (++_sensors[sensor].errorCount > 3) {
             _sensors[sensor].valid = false;
             _filterInitialized[sensor] = false;
@@ -201,6 +213,8 @@ bool UltrasonicManager::readSensor(uint8_t sensor) {
     while (bytesRead < sizeof(buffer) && (millis() - start) < ULTRASONIC_TIMEOUT) {
         if (_ch9434->available(uart)) {
             buffer[bytesRead++] = _ch9434->read(uart);
+        } else if (bytesRead >= 4) {
+            break;
         }
         delayMicroseconds(100);
     }

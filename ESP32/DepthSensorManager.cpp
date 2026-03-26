@@ -162,6 +162,14 @@ uint32_t DepthSensorManager::getLastUpdate() const {
     return _lastUpdate;
 }
 
+const __FlashStringHelper* DepthSensorManager::getStatusText() const {
+    return debugStatusString(_debugStatus);
+}
+
+const __FlashStringHelper* DepthSensorManager::getFailureText() const {
+    return readFailureString(_lastReadFailure);
+}
+
 void DepthSensorManager::printDebug() const {
     Serial.print(F("Depth I2C0: addr=0x"));
     if (DEPTH_I2C_ADDRESS < 0x10) {
@@ -328,7 +336,8 @@ uint8_t DepthSensorManager::calculatePromCrc(const uint16_t prom[8]) const {
 bool DepthSensorManager::writeCommand(uint8_t command) {
     Wire.beginTransmission(DEPTH_I2C_ADDRESS);
     Wire.write(command);
-    return Wire.endTransmission() == 0;
+    _lastI2cError = Wire.endTransmission();
+    return _lastI2cError == 0;
 }
 
 bool DepthSensorManager::readAdc(uint8_t conversionCommand, uint32_t& value, ReadFailure triggerFailure, ReadFailure fetchFailure) {
@@ -336,7 +345,6 @@ bool DepthSensorManager::readAdc(uint8_t conversionCommand, uint32_t& value, Rea
         if (!writeCommand(conversionCommand)) {
             _debugStatus = DEBUG_ADC_READ_FAILED;
             _lastReadFailure = triggerFailure;
-            _lastI2cError = 0xFC;
             delay(2);
             continue;
         }

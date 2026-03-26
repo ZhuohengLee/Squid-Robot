@@ -45,6 +45,8 @@ StatusDisplay statusDisplay;
 
 namespace {
 constexpr uint32_t STARTUP_DEPTH_CALIBRATION_DELAY_MS = 2000;
+constexpr uint8_t DEPTH_INIT_RETRIES = 3;
+constexpr uint32_t DEPTH_INIT_RETRY_DELAY_MS = 200;
 bool gStartupDepthCalibrationDone = false;
 }
 
@@ -120,11 +122,28 @@ void setup() {
     }
     Serial.println(F("OK"));
 
-    Serial.print(F("Initializing MS5837 depth sensor... "));
-    if (depthMgr.begin()) {
-        Serial.println(F("OK"));
+    Serial.print(F("Initializing MS5837 depth sensor"));
+    bool depthReady = false;
+    for (uint8_t attempt = 1; attempt <= DEPTH_INIT_RETRIES; ++attempt) {
+        if (attempt > 1) {
+            Serial.print(F(" | retry "));
+            Serial.print(attempt);
+        }
+
+        if (depthMgr.begin()) {
+            depthReady = true;
+            break;
+        }
+
+        delay(DEPTH_INIT_RETRY_DELAY_MS);
+    }
+
+    if (depthReady) {
+        Serial.println(F("... OK"));
     } else {
-        Serial.println(F("FAILED"));
+        Serial.print(F("... FAILED ("));
+        Serial.print(depthMgr.getStatusText());
+        Serial.println(F(")"));
     }
 
     Serial.print(F("Initializing ultrasonic UARTs... "));
@@ -135,6 +154,7 @@ void setup() {
     }
 
     sensorHub.setDepthSensorManager(&depthMgr);
+    sensorHub.setStatusDisplay(&statusDisplay);
     sensorHub.setUltrasonicManager(&ultrasonicMgr);
 
     motionLink.begin();

@@ -316,10 +316,6 @@ void CommandHandler::handleCalibrateCommand() {
         _sensorHub->calibrateDepthZero();
     }
 
-    if (_motionLink) {
-        _motionLink->requestDepthZeroCalibration();
-    }
-
     Serial.println(F("Depth zero recalibrated."));
 
     if (_mode == MODE_AUTO && _depthController && _autoNavigator) {

@@ -9,15 +9,27 @@
 namespace {
 constexpr uint32_t DISPLAY_INTERVAL_MS = 1000;
 const char* SENSOR_NAMES[NUM_ULTRASONIC] = {"Front", "Left ", "Right"};
+
+void printMotionFlags(uint8_t status) {
+    if (status & 0x01) Serial.print(F("FWD "));
+    if (status & 0x02) Serial.print(F("TURN "));
+    if (status & 0x04) Serial.print(F("BUOY "));
+    if (status == 0) Serial.print(F("IDLE"));
+}
 }
 
 SensorHub::SensorHub()
     : _depthMgr(nullptr),
+      _statusDisplay(nullptr),
       _ultrasonicMgr(nullptr),
       _lastDisplay(0) {}
 
 void SensorHub::setDepthSensorManager(DepthSensorManager* manager) {
     _depthMgr = manager;
+}
+
+void SensorHub::setStatusDisplay(StatusDisplay* display) {
+    _statusDisplay = display;
 }
 
 void SensorHub::setUltrasonicManager(UltrasonicManager* manager) {
@@ -40,15 +52,11 @@ void SensorHub::displayAll() {
     Serial.println(F("\n================ ALL SENSORS ================"));
 
     Serial.print(F("Depth: "));
-    if (_depthMgr && _depthMgr->isValid()) {
+    if (_depthMgr) {
         Serial.print(_depthMgr->getDepthCm(), 2);
-        Serial.print(F(" cm | Temp: "));
-        Serial.print(_depthMgr->getTemperatureC(), 1);
-        Serial.println(F(" C"));
-    } else if (!_depthMgr) {
-        Serial.println(F("disabled"));
+        Serial.println(F(" cm"));
     } else {
-        Serial.println(F("offline"));
+        Serial.println(F("disabled"));
     }
 
     if (_ultrasonicMgr) {
@@ -66,12 +74,18 @@ void SensorHub::displayAll() {
         }
     }
 
+    if (_statusDisplay) {
+        Serial.print(F("Minima: motion="));
+        printMotionFlags(_statusDisplay->getLastMotionStatus());
+        Serial.println();
+    }
+
     Serial.println(F("=============================================\n"));
 }
 
 void SensorHub::displayCompact() {
     Serial.print(F("Sensors: depth="));
-    if (_depthMgr && _depthMgr->isValid()) {
+    if (_depthMgr) {
         Serial.print(_depthMgr->getDepthCm(), 1);
         Serial.print(F("cm"));
     } else {

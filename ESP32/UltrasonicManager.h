@@ -54,6 +54,8 @@ private:
     uint32_t _lastTrigger[NUM_ULTRASONIC];
     uint32_t _lastFilterUpdate[NUM_ULTRASONIC];
     uint32_t _lastScanTime;
+    uint8_t _currentSensor;
+    bool _waitingForResponse;
     uint32_t _rxByteCount[NUM_ULTRASONIC];
     uint8_t _lastRxBuffer[NUM_ULTRASONIC][10];
     uint8_t _lastRxLength[NUM_ULTRASONIC];

@@ -8,7 +8,6 @@
 #define ESP32_STATUS_DISPLAY_H
 
 #include <Arduino.h>
-#include "DepthSensorManager.h"
 #include "Protocol.h"
 
 class StatusDisplay {
@@ -23,18 +22,18 @@ public:
     void disableVerbose();
     void toggleVerbose();
     bool isVerboseEnabled() const;
-    void setDepthSensorManager(DepthSensorManager* manager);
+    uint8_t getLastMotionStatus() const;
+    bool hasRecentHeartbeat(uint32_t nowMs, uint32_t timeoutMs = 3000) const;
 
 private:
     bool _verboseMode;
     unsigned long _lastHeartbeat;
+    uint8_t _lastMotionStatus;
     uint8_t _rxBuffer[FRAME_LENGTH];
     uint8_t _rxIndex;
-    DepthSensorManager* _depthMgr;
 
     void processMotionStatus(uint8_t status);
     void processHeartbeat();
-    void processDepthStatus(uint8_t data0, uint8_t data1, uint8_t data2);
 };
 
 #endif // ESP32_STATUS_DISPLAY_H

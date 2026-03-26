@@ -25,6 +25,8 @@ public:
     float getDepthSpeedCmS() const;
     float getTemperatureC() const;
     uint32_t getLastUpdate() const;
+    const __FlashStringHelper* getStatusText() const;
+    const __FlashStringHelper* getFailureText() const;
     void printDebug() const;
 
 private:

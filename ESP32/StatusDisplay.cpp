@@ -7,10 +7,10 @@
 #include "StatusDisplay.h"
 
 StatusDisplay::StatusDisplay()
-    : _verboseMode(true),
+    : _verboseMode(false),
       _lastHeartbeat(0),
-      _rxIndex(0),
-      _depthMgr(nullptr) {}
+      _lastMotionStatus(0),
+      _rxIndex(0) {}
 
 void StatusDisplay::processMinimaFeedback() {
     while (UART_TO_MINIMA.available()) {
@@ -44,10 +44,6 @@ void StatusDisplay::processMinimaFeedback() {
                 processHeartbeat();
                 break;
 
-            case STATUS_DEPTH:
-                processDepthStatus(_rxBuffer[3], _rxBuffer[4], _rxBuffer[5]);
-                break;
-
             default:
                 break;
         }
@@ -76,11 +72,17 @@ bool StatusDisplay::isVerboseEnabled() const {
     return _verboseMode;
 }
 
-void StatusDisplay::setDepthSensorManager(DepthSensorManager* manager) {
-    _depthMgr = manager;
+uint8_t StatusDisplay::getLastMotionStatus() const {
+    return _lastMotionStatus;
+}
+
+bool StatusDisplay::hasRecentHeartbeat(uint32_t nowMs, uint32_t timeoutMs) const {
+    return _lastHeartbeat != 0 && nowMs - _lastHeartbeat <= timeoutMs;
 }
 
 void StatusDisplay::processMotionStatus(uint8_t status) {
+    _lastMotionStatus = status;
+
     if (!_verboseMode) {
         return;
     }
@@ -95,16 +97,4 @@ void StatusDisplay::processMotionStatus(uint8_t status) {
 
 void StatusDisplay::processHeartbeat() {
     _lastHeartbeat = millis();
-}
-
-void StatusDisplay::processDepthStatus(uint8_t data0, uint8_t data1, uint8_t data2) {
-    if (!_depthMgr) {
-        return;
-    }
-
-    const int16_t depthMm = static_cast<int16_t>(
-        static_cast<uint16_t>(data0) |
-        (static_cast<uint16_t>(data1) << 8));
-    const int8_t temperatureC = static_cast<int8_t>(static_cast<int16_t>(data2) - 40);
-    _depthMgr->ingestMeasurement(depthMm, temperatureC);
 }
