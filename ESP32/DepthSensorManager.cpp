@@ -16,7 +16,7 @@ constexpr uint8_t MS5837_CMD_CONVERT_D2_8192 = 0x5A;
 
 constexpr uint32_t MS5837_RESET_DELAY_MS = 20;
 constexpr uint32_t MS5837_CONVERSION_DELAY_MS = 20;
-constexpr uint32_t SAMPLE_INTERVAL_MS = 100;
+constexpr uint32_t SAMPLE_INTERVAL_MS = 50;
 constexpr uint32_t DATA_TIMEOUT_MS = 2000;
 constexpr uint8_t PROM_WORD_COUNT = 7;
 constexpr uint8_t PROM_READ_RETRIES = 3;
@@ -34,6 +34,7 @@ DepthSensorManager::DepthSensorManager()
       _pressureMbar(0.0f),
       _zeroPressureMbar(0.0f),
       _depthSpeedCmS(0.0f),
+      _depthAccelCmS2(0.0f),
       _valid(false),
       _sensorReady(false),
       _filterInitialized(false),
@@ -121,6 +122,7 @@ void DepthSensorManager::update() {
         _valid = false;
         _filterInitialized = false;
         _depthSpeedCmS = 0.0f;
+        _depthAccelCmS2 = 0.0f;
         _debugStatus = DEBUG_STALE;
     }
 }
@@ -134,6 +136,7 @@ void DepthSensorManager::calibrateZero() {
     _rawDepthCm = 0.0f;
     _filteredDepthCm = 0.0f;
     _depthSpeedCmS = 0.0f;
+    _depthAccelCmS2 = 0.0f;
     _filterInitialized = false;
     _depthFilter.reset();
 }
@@ -152,6 +155,10 @@ float DepthSensorManager::getRawDepthCm() const {
 
 float DepthSensorManager::getDepthSpeedCmS() const {
     return _depthSpeedCmS;
+}
+
+float DepthSensorManager::getDepthAccelCmS2() const {
+    return _depthAccelCmS2;
 }
 
 float DepthSensorManager::getTemperatureC() const {
@@ -208,7 +215,11 @@ void DepthSensorManager::printDebug() const {
     Serial.print(_rawDepthCm, 2);
     Serial.print(F(" cm | Filtered depth: "));
     Serial.print(_filteredDepthCm, 2);
-    Serial.println(F(" cm"));
+    Serial.print(F(" cm | Speed: "));
+    Serial.print(_depthSpeedCmS, 2);
+    Serial.print(F(" cm/s | Accel: "));
+    Serial.print(_depthAccelCmS2, 2);
+    Serial.println(F(" cm/s^2"));
 }
 
 bool DepthSensorManager::resetSensor() {
@@ -446,9 +457,10 @@ void DepthSensorManager::commitDepth(float depthCm, float temperatureC, float pr
     _pressureMbar = pressureMbar;
 
     if (!_filterInitialized) {
-        _depthFilter.reset(depthCm, 0.0f);
+        _depthFilter.reset(depthCm, 0.0f, 0.0f);
         _filteredDepthCm = depthCm;
         _depthSpeedCmS = 0.0f;
+        _depthAccelCmS2 = 0.0f;
         _filterInitialized = true;
     } else {
         float dt = static_cast<float>(now - _lastFilterUpdate) * 0.001f;
@@ -462,6 +474,7 @@ void DepthSensorManager::commitDepth(float depthCm, float temperatureC, float pr
         _depthFilter.update(depthCm, dt);
         _filteredDepthCm = _depthFilter.getPosition();
         _depthSpeedCmS = _depthFilter.getVelocity();
+        _depthAccelCmS2 = _depthFilter.getAcceleration();
     }
 
     _temperatureC = temperatureC;

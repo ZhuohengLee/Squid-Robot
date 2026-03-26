@@ -23,6 +23,7 @@ public:
     float getDepthCm() const;
     float getRawDepthCm() const;
     float getDepthSpeedCmS() const;
+    float getDepthAccelCmS2() const;
     float getTemperatureC() const;
     uint32_t getLastUpdate() const;
     const __FlashStringHelper* getStatusText() const;
@@ -57,6 +58,7 @@ private:
     float _pressureMbar;
     float _zeroPressureMbar;
     float _depthSpeedCmS;
+    float _depthAccelCmS2;
     bool _valid;
     bool _sensorReady;
     bool _filterInitialized;

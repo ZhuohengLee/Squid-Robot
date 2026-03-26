@@ -79,7 +79,6 @@ static uint16_t composeActuatorMask() {
         mask |= rightTurnControl.getMask();
     }
 
-    mask |= depthController.getMask();
     return mask;
 }
 
@@ -187,12 +186,19 @@ void loop() {
     handleStartupDepthCalibration(nowMs);
 
     autoNavigator.update(ultrasonicMgr, nowMs);
-    depthController.update(depthMgr.isValid(), depthMgr.getDepthCm(), depthMgr.getDepthSpeedCmS(), nowMs);
+    depthController.update(
+        depthMgr.isValid(),
+        depthMgr.getDepthCm(),
+        depthMgr.getDepthSpeedCmS(),
+        depthMgr.getDepthAccelCmS2(),
+        nowMs
+    );
     forwardControl.update(nowMs);
     leftTurnControl.update(nowMs);
     rightTurnControl.update(nowMs);
 
     motionLink.applyMask(composeActuatorMask());
+    motionLink.applyBuoyancy(depthController.getBuoyancyDirection(), depthController.getBuoyancyPwm());
     statusDisplay.processMinimaFeedback();
     sensorHub.displayAll();
     otaManager.handle();

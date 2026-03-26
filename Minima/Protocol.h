@@ -18,6 +18,7 @@
 
 #define CMD_SET_ACTUATORS     0x01
 #define CMD_EMERGENCY_STOP    0x02
+#define CMD_SET_BUOYANCY      0x04
 
 #define STATUS_MOTION         0x81
 #define STATUS_HEARTBEAT      0x82
@@ -38,6 +39,10 @@ constexpr uint16_t ACT_TURN_GROUP =
     ACT_TURN_PUMP | ACT_TURN_VALVE_E | ACT_TURN_VALVE_F;
 constexpr uint16_t ACT_BUOYANCY_GROUP =
     ACT_BUOYANCY_PUMP | ACT_BUOYANCY_VALVE_H | ACT_BUOYANCY_VALVE_I;
+
+constexpr uint8_t BUOYANCY_STOP = 0;
+constexpr uint8_t BUOYANCY_ASCEND = 1;
+constexpr uint8_t BUOYANCY_DESCEND = 2;
 
 struct ProtocolFrame {
     uint8_t cmd;

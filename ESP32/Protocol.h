@@ -45,6 +45,7 @@
 #define CMD_SET_ACTUATORS     0x01
 #define CMD_EMERGENCY_STOP    0x02
 #define CMD_CALIBRATE_DEPTH_ZERO 0x03
+#define CMD_SET_BUOYANCY      0x04
 
 // Minima 回传的状态帧命令号。
 #define STATUS_MOTION         0x81
@@ -83,6 +84,10 @@ constexpr uint16_t ACT_TURN_GROUP =
     ACT_TURN_PUMP | ACT_TURN_VALVE_E | ACT_TURN_VALVE_F;
 constexpr uint16_t ACT_BUOYANCY_GROUP =
     ACT_BUOYANCY_PUMP | ACT_BUOYANCY_VALVE_H | ACT_BUOYANCY_VALVE_I;
+
+constexpr uint8_t BUOYANCY_STOP = 0;
+constexpr uint8_t BUOYANCY_ASCEND = 1;
+constexpr uint8_t BUOYANCY_DESCEND = 2;
 
 // CRC8 校验函数，ESP32 和 Minima 两侧保持一致。
 inline uint8_t calculateCRC8(uint8_t* data, uint8_t len) {

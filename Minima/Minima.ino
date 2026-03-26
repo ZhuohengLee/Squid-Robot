@@ -63,6 +63,10 @@ static void executeCommand(uint8_t cmd, uint8_t data0, uint8_t data1, uint8_t da
             motion.emergencyStopAll();
             break;
 
+        case CMD_SET_BUOYANCY:
+            motion.applyBuoyancy(data0, data1);
+            break;
+
         default:
             Serial.print(F("Unknown command: 0x"));
             Serial.println(cmd, HEX);
@@ -96,6 +100,7 @@ void loop() {
     const unsigned long now = millis();
 
     processESP32Command();
+    motion.update();
 
     if (now - tStatus >= STATUS_INTERVAL) {
         tStatus = now;

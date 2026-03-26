@@ -1,14 +1,23 @@
 /**********************************************************************
  * MotionControl.cpp
  *
- * 这个文件实现 Minima 侧的低层执行器控制。
- * Minima 只执行 ESP32 发来的位掩码，不保存任何动作持续时间。
+ * Low-level Minima actuator executor with software-PWM buoyancy output.
  *********************************************************************/
 
 #include "MotionControl.h"
 
+namespace {
+constexpr uint32_t VALVE_MIN_INTERVAL_MS = 200;
+constexpr uint32_t BUOYANCY_PWM_PERIOD_US = 20000;
+}
+
 MotionController::MotionController()
-    : _mask(0) {}
+    : _mask(0),
+      _requestedBuoyancyDirection(BUOYANCY_STOP),
+      _requestedBuoyancyPwm(0),
+      _appliedBuoyancyDirection(BUOYANCY_STOP),
+      _appliedBuoyancyPwm(0),
+      _lastValveChangeMs(0) {}
 
 void MotionController::begin() {
     pinMode(PUMP_A_PIN, OUTPUT);
@@ -29,8 +38,27 @@ void MotionController::applyMask(uint16_t mask) {
     writeOutputs();
 }
 
+void MotionController::applyBuoyancy(uint8_t direction, uint8_t pwm) {
+    if (direction == BUOYANCY_STOP || pwm == 0) {
+        _requestedBuoyancyDirection = BUOYANCY_STOP;
+        _requestedBuoyancyPwm = 0;
+        return;
+    }
+
+    _requestedBuoyancyDirection = direction;
+    _requestedBuoyancyPwm = pwm;
+}
+
+void MotionController::update() {
+    writeOutputs();
+}
+
 void MotionController::emergencyStopAll() {
     _mask = 0;
+    _requestedBuoyancyDirection = BUOYANCY_STOP;
+    _requestedBuoyancyPwm = 0;
+    _appliedBuoyancyDirection = BUOYANCY_STOP;
+    _appliedBuoyancyPwm = 0;
     writeOutputs();
 }
 
@@ -47,11 +75,19 @@ bool MotionController::isTurnActive() const {
 }
 
 bool MotionController::isBuoyancyActive() const {
-    return (_mask & ACT_BUOYANCY_GROUP) != 0;
+    return _appliedBuoyancyPwm > 0;
 }
 
 bool MotionController::isAnyActive() const {
-    return _mask != 0;
+    return _mask != 0 || _appliedBuoyancyPwm > 0;
+}
+
+uint8_t MotionController::getBuoyancyDirection() const {
+    return _appliedBuoyancyDirection;
+}
+
+uint8_t MotionController::getBuoyancyPwm() const {
+    return _appliedBuoyancyPwm;
 }
 
 void MotionController::printStatus() {
@@ -68,7 +104,11 @@ void MotionController::printStatus() {
     }
 
     if (isBuoyancyActive()) {
-        Serial.print(F("BUOY "));
+        Serial.print(F("BUOY("));
+        Serial.print(_appliedBuoyancyDirection == BUOYANCY_DESCEND ? F("DESC") : F("ASC"));
+        Serial.print(',');
+        Serial.print(_appliedBuoyancyPwm);
+        Serial.print(F(") "));
     }
 
     if (!isAnyActive()) {
@@ -85,7 +125,38 @@ void MotionController::writeOutputs() {
     digitalWrite(PUMP_D_PIN,   (_mask & ACT_TURN_PUMP) != 0 ? HIGH : LOW);
     digitalWrite(VALVE_E_PIN,  (_mask & ACT_TURN_VALVE_E) != 0 ? HIGH : LOW);
     digitalWrite(VALVE_F_PIN,  (_mask & ACT_TURN_VALVE_F) != 0 ? HIGH : LOW);
-    digitalWrite(PUMP_G_PIN,   (_mask & ACT_BUOYANCY_PUMP) != 0 ? HIGH : LOW);
-    digitalWrite(VALVE_H_PIN,  (_mask & ACT_BUOYANCY_VALVE_H) != 0 ? HIGH : LOW);
-    digitalWrite(VALVE_I_PIN,  (_mask & ACT_BUOYANCY_VALVE_I) != 0 ? HIGH : LOW);
+    writeBuoyancyOutputs(millis());
+}
+
+void MotionController::writeBuoyancyOutputs(uint32_t nowMs) {
+    if (_requestedBuoyancyDirection == BUOYANCY_STOP || _requestedBuoyancyPwm == 0) {
+        _appliedBuoyancyPwm = 0;
+        _appliedBuoyancyDirection = BUOYANCY_STOP;
+        digitalWrite(PUMP_G_PIN, LOW);
+        digitalWrite(VALVE_H_PIN, LOW);
+        digitalWrite(VALVE_I_PIN, LOW);
+        return;
+    }
+
+    if (_requestedBuoyancyDirection != _appliedBuoyancyDirection) {
+        if (nowMs - _lastValveChangeMs >= VALVE_MIN_INTERVAL_MS) {
+            _appliedBuoyancyDirection = _requestedBuoyancyDirection;
+            _lastValveChangeMs = nowMs;
+        } else {
+            _appliedBuoyancyPwm = 0;
+            digitalWrite(PUMP_G_PIN, LOW);
+            return;
+        }
+    }
+
+    _appliedBuoyancyPwm = _requestedBuoyancyPwm;
+
+    const bool descend = _appliedBuoyancyDirection == BUOYANCY_DESCEND;
+    digitalWrite(VALVE_H_PIN, descend ? HIGH : LOW);
+    digitalWrite(VALVE_I_PIN, descend ? HIGH : LOW);
+
+    const uint32_t dutyUs =
+        (static_cast<uint32_t>(_appliedBuoyancyPwm) * BUOYANCY_PWM_PERIOD_US) / 255U;
+    const bool pumpOn = dutyUs > 0 && (micros() % BUOYANCY_PWM_PERIOD_US) < dutyUs;
+    digitalWrite(PUMP_G_PIN, pumpOn ? HIGH : LOW);
 }

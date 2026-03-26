@@ -1,53 +1,88 @@
 /**********************************************************************
  * KalmanFilter.cpp
  *
- * 这个文件实现二阶运动学卡尔曼滤波器。
+ * Constant-acceleration Kalman filter for depth, vertical speed, and
+ * vertical acceleration.
  *********************************************************************/
 
 #include "KalmanFilter.h"
 
 KalmanFilter::KalmanFilter() {
-    _q[0][0] = 0.01f;
-    _q[0][1] = 0.0f;
-    _q[1][0] = 0.0f;
-    _q[1][1] = 0.05f;
-    _r = 0.5f;
+    _q[0] = 0.02f;
+    _q[1] = 0.15f;
+    _q[2] = 0.80f;
+    _r = 0.35f;
     reset();
 }
 
-void KalmanFilter::reset(float position, float velocity) {
+void KalmanFilter::reset(float position, float velocity, float acceleration) {
     _x[0] = position;
     _x[1] = velocity;
-    _p[0][0] = 1.0f;
-    _p[0][1] = 0.0f;
-    _p[1][0] = 0.0f;
-    _p[1][1] = 1.0f;
+    _x[2] = acceleration;
+
+    for (uint8_t row = 0; row < 3; ++row) {
+        for (uint8_t col = 0; col < 3; ++col) {
+            _p[row][col] = row == col ? 1.0f : 0.0f;
+        }
+    }
 }
 
 void KalmanFilter::update(float measurement, float dt) {
-    float xPred[2];
-    xPred[0] = _x[0] + _x[1] * dt;
-    xPred[1] = _x[1];
+    const float dt2 = dt * dt;
+    const float halfDt2 = 0.5f * dt2;
+    const float f[3][3] = {
+        {1.0f, dt, halfDt2},
+        {0.0f, 1.0f, dt},
+        {0.0f, 0.0f, 1.0f}
+    };
 
-    float pPred[2][2];
-    pPred[0][0] = _p[0][0] + dt * (_p[1][0] + _p[0][1]) + dt * dt * _p[1][1] + _q[0][0];
-    pPred[0][1] = _p[0][1] + dt * _p[1][1] + _q[0][1];
-    pPred[1][0] = _p[1][0] + dt * _p[1][1] + _q[1][0];
-    pPred[1][1] = _p[1][1] + _q[1][1];
+    float xPred[3];
+    for (uint8_t row = 0; row < 3; ++row) {
+        xPred[row] = 0.0f;
+        for (uint8_t col = 0; col < 3; ++col) {
+            xPred[row] += f[row][col] * _x[col];
+        }
+    }
 
-    float innovation = measurement - xPred[0];
-    float s = pPred[0][0] + _r;
-    float k[2];
-    k[0] = pPred[0][0] / s;
-    k[1] = pPred[1][0] / s;
+    float fp[3][3];
+    for (uint8_t row = 0; row < 3; ++row) {
+        for (uint8_t col = 0; col < 3; ++col) {
+            fp[row][col] = 0.0f;
+            for (uint8_t k = 0; k < 3; ++k) {
+                fp[row][col] += f[row][k] * _p[k][col];
+            }
+        }
+    }
 
-    _x[0] = xPred[0] + k[0] * innovation;
-    _x[1] = xPred[1] + k[1] * innovation;
+    float pPred[3][3];
+    for (uint8_t row = 0; row < 3; ++row) {
+        for (uint8_t col = 0; col < 3; ++col) {
+            pPred[row][col] = 0.0f;
+            for (uint8_t k = 0; k < 3; ++k) {
+                pPred[row][col] += fp[row][k] * f[col][k];
+            }
+            if (row == col) {
+                pPred[row][col] += _q[row];
+            }
+        }
+    }
 
-    _p[0][0] = (1.0f - k[0]) * pPred[0][0];
-    _p[0][1] = (1.0f - k[0]) * pPred[0][1];
-    _p[1][0] = pPred[1][0] - k[1] * pPred[0][0];
-    _p[1][1] = pPred[1][1] - k[1] * pPred[0][1];
+    const float innovation = measurement - xPred[0];
+    const float s = pPred[0][0] + _r;
+    float k[3];
+    for (uint8_t row = 0; row < 3; ++row) {
+        k[row] = pPred[row][0] / s;
+    }
+
+    for (uint8_t row = 0; row < 3; ++row) {
+        _x[row] = xPred[row] + k[row] * innovation;
+    }
+
+    for (uint8_t row = 0; row < 3; ++row) {
+        for (uint8_t col = 0; col < 3; ++col) {
+            _p[row][col] = pPred[row][col] - k[row] * pPred[0][col];
+        }
+    }
 }
 
 float KalmanFilter::getPosition() const {
@@ -56,4 +91,8 @@ float KalmanFilter::getPosition() const {
 
 float KalmanFilter::getVelocity() const {
     return _x[1];
+}
+
+float KalmanFilter::getAcceleration() const {
+    return _x[2];
 }

@@ -1,7 +1,7 @@
 /**********************************************************************
  * KalmanFilter.h
  *
- * 这个文件声明二阶运动学卡尔曼滤波器。
+ * Three-state depth filter tracking position, velocity, and acceleration.
  *********************************************************************/
 
 #ifndef ESP32_KALMAN_FILTER_H
@@ -13,16 +13,17 @@ class KalmanFilter {
 public:
     KalmanFilter();
 
-    void reset(float position = 0.0f, float velocity = 0.0f);
+    void reset(float position = 0.0f, float velocity = 0.0f, float acceleration = 0.0f);
     void update(float measurement, float dt);
 
     float getPosition() const;
     float getVelocity() const;
+    float getAcceleration() const;
 
 private:
-    float _x[2];
-    float _p[2][2];
-    float _q[2][2];
+    float _x[3];
+    float _p[3][3];
+    float _q[3];
     float _r;
 };
 

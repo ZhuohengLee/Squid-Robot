@@ -18,6 +18,84 @@
 5. `ESP32` 计算最终执行器掩码并通过串口发给 `Minima`。
 6. `Minima` 只负责执行输出。
 
+## Depth Hold Notes
+
+- The `ESP32` samples `MS5837-02BA` every `50 ms`.
+- Depth estimation now uses a three-state Kalman filter: depth, vertical speed, and vertical acceleration.
+- The depth controller uses predictive braking and sends buoyancy direction plus PWM over UART to `Minima`.
+- `Minima` keeps the forward and turn channels as digital outputs, and drives the buoyancy pump with software PWM.
+- The buoyancy valves keep a `200 ms` minimum direction-change interval to avoid rapid valve chatter.
+
+## System Block Diagram
+
+```mermaid
+flowchart LR
+  PC["Host PC / Serial Console"] -->|Commands| ESP["ESP32 Main Controller"]
+
+  Depth["MS5837 Depth Sensor"] -->|I2C| ESP
+  USF["Front Ultrasonic"] --> CH["CH9434A SPI-to-UART"]
+  USL["Left Ultrasonic"] --> CH
+  USR["Right Ultrasonic"] --> CH
+  CH -->|SPI + UART channels| ESP
+
+  ESP -->|Actuator mask / UART| MIN["Arduino Minima<br/>Actuator Executor"]
+  MIN -->|Status / Heartbeat| ESP
+
+  subgraph Logic["Control Logic in ESP32"]
+    ESP1["Manual Control"]
+    ESP2["Auto Navigation"]
+    ESP3["Depth Hold Control"]
+    ESP4["Actuator Mask Generation"]
+  end
+
+  ESP --- ESP1
+  ESP --- ESP2
+  ESP --- ESP3
+  ESP --- ESP4
+
+  subgraph MinimaPins["Minima GPIO to Actuator Control Pins"]
+    M2["GPIO2"] --> PA["Pump A Control Pin"]
+    M6["GPIO6"] --> VB["Solenoid Valve B Control Pin"]
+    M7["GPIO7"] --> VC["Solenoid Valve C Control Pin"]
+
+    M5["GPIO5"] --> PD["Pump D Control Pin"]
+    M3["GPIO3"] --> VE["Solenoid Valve E Control Pin"]
+    M4["GPIO4"] --> VF["Solenoid Valve F Control Pin"]
+
+    M8["GPIO8"] --> PG["Pump G Control Pin"]
+    M9["GPIO9"] --> VH["Solenoid Valve H Control Pin"]
+    M10["GPIO10"] --> VI["Solenoid Valve I Control Pin"]
+  end
+
+  MIN --> M2
+  MIN --> M6
+  MIN --> M7
+  MIN --> M5
+  MIN --> M3
+  MIN --> M4
+  MIN --> M8
+  MIN --> M9
+  MIN --> M10
+
+  subgraph Actuators["Actuator Groups"]
+    FWD["Forward Group<br/>Pump A + Valve B + Valve C"]
+    TURN["Turning Group<br/>Pump D + Valve E + Valve F"]
+    BUOY["Buoyancy Group<br/>Pump G + Valve H + Valve I"]
+  end
+
+  PA --- FWD
+  VB --- FWD
+  VC --- FWD
+
+  PD --- TURN
+  VE --- TURN
+  VF --- TURN
+
+  PG --- BUOY
+  VH --- BUOY
+  VI --- BUOY
+```
+
 ## 关键接线
 
 ### MS5837 深度传感器

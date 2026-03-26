@@ -1,8 +1,7 @@
 /**********************************************************************
  * MotionControl.h
  *
- * 这个文件声明 Minima 侧的低层执行器控制类。
- * 它不再负责任何运动时间逻辑，只负责把位掩码写到真实引脚。
+ * Low-level Minima actuator executor with software-PWM buoyancy output.
  *********************************************************************/
 
 #ifndef MOTION_CONTROL_H
@@ -16,30 +15,32 @@ class MotionController {
 public:
     MotionController();
 
-    // 初始化全部执行器引脚。
     void begin();
-
-    // 应用来自 ESP32 的完整执行器掩码。
     void applyMask(uint16_t mask);
-
-    // 全局急停，清空所有执行器。
+    void applyBuoyancy(uint8_t direction, uint8_t pwm);
+    void update();
     void emergencyStopAll();
 
-    // 获取当前输出掩码和状态。
     uint16_t getMask() const;
     bool isForwardActive() const;
     bool isTurnActive() const;
     bool isBuoyancyActive() const;
     bool isAnyActive() const;
+    uint8_t getBuoyancyDirection() const;
+    uint8_t getBuoyancyPwm() const;
 
-    // 打印当前执行器状态，便于串口调试。
     void printStatus();
 
 private:
     uint16_t _mask;
+    uint8_t _requestedBuoyancyDirection;
+    uint8_t _requestedBuoyancyPwm;
+    uint8_t _appliedBuoyancyDirection;
+    uint8_t _appliedBuoyancyPwm;
+    uint32_t _lastValveChangeMs;
 
-    // 把内部掩码同步到真实 GPIO。
     void writeOutputs();
+    void writeBuoyancyOutputs(uint32_t nowMs);
 };
 
 #endif // MOTION_CONTROL_H

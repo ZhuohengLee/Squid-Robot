@@ -54,7 +54,11 @@ void SensorHub::displayAll() {
     Serial.print(F("Depth: "));
     if (_depthMgr) {
         Serial.print(_depthMgr->getDepthCm(), 2);
-        Serial.println(F(" cm"));
+        Serial.print(F(" cm | vz="));
+        Serial.print(_depthMgr->getDepthSpeedCmS(), 2);
+        Serial.print(F(" cm/s | az="));
+        Serial.print(_depthMgr->getDepthAccelCmS2(), 2);
+        Serial.println(F(" cm/s^2"));
     } else {
         Serial.println(F("disabled"));
     }
