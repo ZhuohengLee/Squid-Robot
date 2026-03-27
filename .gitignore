@@ -1,0 +1,51 @@
+.render/
+.tmp/
+ESP32/OtaConfig.local.h
+
+# Prerequisites
+*.d
+
+# Compiled object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled headers
+*.gch
+*.pch
+
+# Linker files
+*.ilk
+*.map
+
+# Debugger files
+*.pdb
+*.dwo
+
+# Compiled dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables and firmware outputs
+*.exe
+*.out
+*.app
+*.elf
+*.bin
+*.hex
+
+# Generic build folders
+build/
+dist/
