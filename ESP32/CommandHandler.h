@@ -46,11 +46,15 @@ public:
     // 轮询 USB 串口输入。
     void processSerialInput();
 
+    // 轮询 HC-12 无线串口输入（与 USB 串口执行相同的命令集）。
+    void processHC12Input();
+
     // 获取当前模式。
     ControlMode getMode() const;
 
 private:
     String _cmdBuffer;
+    String _hc12Buffer;
 
     SensorHub* _sensorHub;
     StatusDisplay* _statusDisplay;
@@ -69,6 +73,7 @@ private:
     void enterAutoMode();
     void handleManualCommand(const String& cmd);
     void handleDepthTargetCommand(const String& cmd);
+    void handleHC12ChannelCommand(const String& channel);
     void handleCalibrateCommand();
     void handleStopCommand();
     void printModeBanner() const;

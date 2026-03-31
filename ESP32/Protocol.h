@@ -16,6 +16,14 @@
 #define UART_TX_PIN           17
 #define UART_RX_PIN           18
 
+// HC-12 无线串口（Serial2）。
+// Arduino Bridge ──HC-12──► ESP32 Serial2
+#define HC12_SERIAL           Serial2
+#define HC12_BAUD_RATE        9600
+#define HC12_TX_PIN           2
+#define HC12_RX_PIN           1
+#define HC12_SET_PIN          47
+
 // ESP32 和 CH9434A 的 SPI 接线。
 #define SPI_MOSI              11
 #define SPI_MISO              13
