@@ -9,9 +9,12 @@
  *********************************************************************/
 
 #include "CommandHandler.h"
+#include "Protocol.h"
 #include "StatusDisplay.h"
 
 namespace {
+constexpr size_t MAX_COMMAND_LENGTH = 64;
+
 String normalizeCommand(String cmd) {
     cmd.trim();
     cmd.toLowerCase();
@@ -37,6 +40,11 @@ void printHelp() {
     Serial.println(F("  g                - Show all sensor readings"));
     Serial.println(F("  v                - Toggle verbose output"));
     Serial.println(F(""));
+    Serial.println(F("HC-12 channel:"));
+    Serial.println(F("  ESP025           - Set this robot HC-12 to ch.025"));
+    Serial.println(F("  (send HC025 via bridge to set bridge end)"));
+    Serial.println(F("  Sync order: ESP first, then HC"));
+    Serial.println(F(""));
     Serial.println(F("System:"));
     Serial.println(F("  h                - Show this help"));
     Serial.println(F("===================================================\n"));
@@ -45,6 +53,7 @@ void printHelp() {
 
 CommandHandler::CommandHandler()
     : _cmdBuffer(""),
+      _hc12Buffer(""),
       _sensorHub(nullptr),
       _statusDisplay(nullptr),
       _motionLink(nullptr),
@@ -56,8 +65,13 @@ CommandHandler::CommandHandler()
       _mode(MODE_MANUAL) {}
 
 void CommandHandler::begin() {
-    _cmdBuffer = "";
+    _cmdBuffer  = "";
+    _hc12Buffer = "";
     _mode = MODE_MANUAL;
+    pinMode(HC12_SET_PIN, OUTPUT);
+    digitalWrite(HC12_SET_PIN, HIGH);
+    HC12_SERIAL.begin(HC12_BAUD_RATE, SERIAL_8N1, HC12_RX_PIN, HC12_TX_PIN);
+    Serial.println(F("[CommandHandler] HC-12 serial initialized."));
 }
 
 void CommandHandler::setSensorHub(SensorHub* hub) {
@@ -106,6 +120,32 @@ void CommandHandler::processSerialInput() {
 
         if (c != ' ') {
             _cmdBuffer += c;
+            if (_cmdBuffer.length() > MAX_COMMAND_LENGTH) {
+                Serial.println(F("[CommandHandler] USB input overflow, buffer cleared."));
+                _cmdBuffer = "";
+            }
+        }
+    }
+}
+
+void CommandHandler::processHC12Input() {
+    while (HC12_SERIAL.available()) {
+        const char c = static_cast<char>(HC12_SERIAL.read());
+
+        if (c == '\n' || c == '\r') {
+            if (_hc12Buffer.length() > 0) {
+                processCommand(normalizeCommand(_hc12Buffer));
+            }
+            _hc12Buffer = "";
+            continue;
+        }
+
+        if (c != ' ') {
+            _hc12Buffer += c;
+            // HC-12 单包最大 58 字节，超出视为噪声丢弃
+            if (_hc12Buffer.length() > MAX_COMMAND_LENGTH) {
+                _hc12Buffer = "";
+            }
         }
     }
 }
@@ -116,6 +156,13 @@ CommandHandler::ControlMode CommandHandler::getMode() const {
 
 void CommandHandler::processCommand(const String& cmd) {
     if (cmd.length() == 0) {
+        return;
+    }
+
+    // ESP + 3位数字 → 配置本端 HC-12 信道，例如 ESP025
+    if (cmd.length() == 6 && cmd.startsWith("esp") &&
+        isDigit(cmd[3]) && isDigit(cmd[4]) && isDigit(cmd[5])) {
+        handleHC12ChannelCommand(cmd.substring(3));
         return;
     }
 
@@ -239,7 +286,12 @@ void CommandHandler::handleManualCommand(const String& cmd) {
     }
 
     if (cmd == "w" || cmd == "forward") {
-        _forwardControl->start();
+        if (_forwardControl->isRunning()) {
+            _forwardControl->emergencyStop();
+        } else if (!_forwardControl->isBalancing()) {
+            _forwardControl->start();
+        }
+        // 正在平衡中时忽略命令
         return;
     }
 
@@ -336,7 +388,7 @@ void CommandHandler::handleStopCommand() {
     }
 
     if (_forwardControl) {
-        _forwardControl->emergencyStop();
+        _forwardControl->stop();  // 带气压平衡
     }
 
     if (_leftTurnControl) {
@@ -356,7 +408,59 @@ void CommandHandler::handleStopCommand() {
         _motionLink->emergencyStop();
     }
 
-    Serial.println(F("Emergency stop sent. Mode forced to MANUAL."));
+    Serial.println(F("Stop: pressure balance in progress..."));
+}
+
+void CommandHandler::handleHC12ChannelCommand(const String& channel) {
+    Serial.print(F("[HC-12] Setting channel to "));
+    Serial.print(channel);
+    Serial.print(F(" ..."));
+
+    // 先在当前信道通知 Minima，此时双方还在同一信道可以收到
+    HC12_SERIAL.print(F("[Robot] Switching to ch."));
+    HC12_SERIAL.print(channel);
+    HC12_SERIAL.print(F(", send HC"));
+    HC12_SERIAL.print(channel);
+    HC12_SERIAL.println(F(" now"));
+    delay(100); // 等待发送完成再切换
+
+    // 拉低 SET 脚，进入 AT 命令模式（HC-12 需要 ≥40ms 才进入）
+    digitalWrite(HC12_SET_PIN, LOW);
+    delay(200);
+
+    HC12_SERIAL.print(F("AT+C"));
+    HC12_SERIAL.println(channel);
+
+    // 等待 HC-12 响应，最多 1000ms
+    String response = "";
+    uint32_t start = millis();
+    while (millis() - start < 1000) {
+        if (HC12_SERIAL.available()) {
+            response += (char)HC12_SERIAL.read();
+        }
+    }
+
+    // 拉高 SET 脚，退出 AT 模式，恢复透传
+    digitalWrite(HC12_SET_PIN, HIGH);
+    delay(200);
+
+    response.trim();
+    if (response.indexOf("OK") >= 0) {
+        Serial.print(F(" OK (ch."));
+        Serial.print(channel);
+        Serial.print(F(") — now send HC"));
+        Serial.print(channel);
+        Serial.println(F(" to bridge end"));
+    } else {
+        Serial.print(F(" FAILED"));
+        if (response.length() > 0) {
+            Serial.print(F(": "));
+            Serial.print(response);
+        } else {
+            Serial.print(F(": no response — check SET wiring (IO47)"));
+        }
+        Serial.println();
+    }
 }
 
 void CommandHandler::printModeBanner() const {

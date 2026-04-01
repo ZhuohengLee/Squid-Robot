@@ -70,6 +70,7 @@ private:
     uint8_t _buoyancyDirection;
     uint8_t _buoyancyPwm;
     uint32_t _lastControlUpdateMs;
+    uint32_t _manualStartMs;
 };
 
 #endif // ESP32_DEPTH_CONTROLLER_H

@@ -199,8 +199,8 @@ bool UltrasonicManager::readSensor(uint8_t sensor) {
 
     if (_ch9434->available(uart) == 0) {
         _lastDebugStatus[sensor] = DEBUG_NO_DATA;
+        _sensors[sensor].valid = false;
         if (++_sensors[sensor].errorCount > 3) {
-            _sensors[sensor].valid = false;
             _filterInitialized[sensor] = false;
         }
         return false;
@@ -230,7 +230,11 @@ bool UltrasonicManager::readSensor(uint8_t sensor) {
 
     if (bytesRead < 4) {
         _lastDebugStatus[sensor] = bytesRead == 0 ? DEBUG_NO_DATA : DEBUG_SHORT_FRAME;
+        _sensors[sensor].valid = false;
         ++_sensors[sensor].errorCount;
+        if (_sensors[sensor].errorCount > 3) {
+            _filterInitialized[sensor] = false;
+        }
         return false;
     }
 
@@ -244,14 +248,22 @@ bool UltrasonicManager::readSensor(uint8_t sensor) {
 
     if (frameStart < 0 || !validateFrame(&buffer[frameStart])) {
         _lastDebugStatus[sensor] = DEBUG_BAD_CHECKSUM;
+        _sensors[sensor].valid = false;
         ++_sensors[sensor].errorCount;
+        if (_sensors[sensor].errorCount > 3) {
+            _filterInitialized[sensor] = false;
+        }
         return false;
     }
 
     const uint16_t rawDistanceMm = parseDistance(&buffer[frameStart]);
     if (rawDistanceMm < 50 || rawDistanceMm > 3000) {
         _lastDebugStatus[sensor] = DEBUG_OUT_OF_RANGE;
+        _sensors[sensor].valid = false;
         ++_sensors[sensor].errorCount;
+        if (_sensors[sensor].errorCount > 3) {
+            _filterInitialized[sensor] = false;
+        }
         return false;
     }
 

@@ -1,7 +1,11 @@
 /**********************************************************************
- * Minima.ino
+ * Minima.ino  —  V6
  *
- * 这是 Arduino Minima 执行器草图入口。
+ * 版本变更（V6）：
+ *   - 无功能变更；Minima 仍为纯执行端。
+ *   - 配套遥控通道改为 HC-12 无线透传（见 Minima_Bridge/ 草图）；
+ *     Minima 本身仍只通过有线 Serial1 与 ESP32 通信。
+ *
  * Minima 只做三件事：
  * 1. 接收 ESP32 下发的执行器掩码；
  * 2. 把掩码直接写到真实引脚；
@@ -21,6 +25,9 @@ unsigned long tStatus = 0;
 unsigned long tHeartbeat = 0;
 const unsigned long STATUS_INTERVAL = 500;
 const unsigned long HEARTBEAT_INTERVAL = 1000;
+const unsigned long COMMAND_TIMEOUT_INTERVAL = 1500;
+unsigned long gLastCommandMs = 0;
+bool gCommandTimedOut = false;
 
 // 发送状态帧到 ESP32。
 static void sendStatusToESP32(uint8_t cmd, uint8_t data0 = 0, uint8_t data1 = 0, uint8_t data2 = 0) {
@@ -78,8 +85,23 @@ static void executeCommand(uint8_t cmd, uint8_t data0, uint8_t data1, uint8_t da
 static void processESP32Command() {
     ProtocolFrame frame;
     while (protocolReceiver.poll(UART_FROM_ESP32, frame)) {
+        gLastCommandMs = millis();
+        gCommandTimedOut = false;
         executeCommand(frame.cmd, frame.data0, frame.data1, frame.data2);
     }
+}
+
+static void enforceCommandWatchdog(unsigned long now) {
+    if (gLastCommandMs == 0 || now - gLastCommandMs <= COMMAND_TIMEOUT_INTERVAL) {
+        return;
+    }
+
+    if (!gCommandTimedOut && motion.isAnyActive()) {
+        motion.emergencyStopAll();
+        Serial.println(F("[Link] Command timeout, outputs forced off."));
+    }
+
+    gCommandTimedOut = true;
 }
 
 void setup() {
@@ -93,6 +115,8 @@ void setup() {
     Serial.println(F("============================================"));
 
     motion.begin();
+    gLastCommandMs = millis();
+    gCommandTimedOut = false;
     Serial.println(F("Actuator executor ready.\n"));
 }
 
@@ -100,6 +124,7 @@ void loop() {
     const unsigned long now = millis();
 
     processESP32Command();
+    enforceCommandWatchdog(now);
     motion.update();
 
     if (now - tStatus >= STATUS_INTERVAL) {

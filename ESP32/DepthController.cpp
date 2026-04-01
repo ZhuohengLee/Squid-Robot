@@ -15,6 +15,7 @@ constexpr float CONTROL_TRIGGER = 8.0f;
 constexpr uint8_t PUMP_PWM_MIN = 80;
 constexpr uint8_t PUMP_PWM_MAX = 255;
 constexpr uint8_t MANUAL_PWM = 255;
+constexpr uint32_t MANUAL_DURATION_MS = 1500;
 }
 
 DepthController::DepthController()
@@ -36,7 +37,8 @@ DepthController::DepthController()
       _manualDirection(BUOYANCY_STOP),
       _buoyancyDirection(BUOYANCY_STOP),
       _buoyancyPwm(0),
-      _lastControlUpdateMs(0) {}
+      _lastControlUpdateMs(0),
+      _manualStartMs(0) {}
 
 void DepthController::begin() {
     resetAfterCalibration();
@@ -48,6 +50,10 @@ void DepthController::update(bool depthValid,
                              float depthAccelCmS2,
                              uint32_t nowMs) {
     if (_manualDirection != BUOYANCY_STOP) {
+        if (nowMs - _manualStartMs >= MANUAL_DURATION_MS) {
+            manualStop();
+            return;
+        }
         _controlOutput = _manualDirection == BUOYANCY_DESCEND ? 100.0f : -100.0f;
         _buoyancyDirection = _manualDirection;
         _buoyancyPwm = MANUAL_PWM;
@@ -148,6 +154,7 @@ bool DepthController::isHoldingTarget() const {
 void DepthController::manualAscend() {
     clearTarget();
     _manualDirection = BUOYANCY_ASCEND;
+    _manualStartMs = millis();
     _controlOutput = -100.0f;
     _buoyancyDirection = BUOYANCY_ASCEND;
     _buoyancyPwm = MANUAL_PWM;
@@ -156,6 +163,7 @@ void DepthController::manualAscend() {
 void DepthController::manualDescend() {
     clearTarget();
     _manualDirection = BUOYANCY_DESCEND;
+    _manualStartMs = millis();
     _controlOutput = 100.0f;
     _buoyancyDirection = BUOYANCY_DESCEND;
     _buoyancyPwm = MANUAL_PWM;
@@ -180,6 +188,7 @@ void DepthController::resetAfterCalibration() {
     _buoyancyDirection = BUOYANCY_STOP;
     _buoyancyPwm = 0;
     _lastControlUpdateMs = 0;
+    _manualStartMs = 0;
 }
 
 float DepthController::getFilteredDepthCm() const {

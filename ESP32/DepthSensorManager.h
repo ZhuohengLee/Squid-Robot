@@ -69,6 +69,7 @@ private:
     uint32_t _lastSampleMs;
     uint32_t _sampleCount;
     uint32_t _readErrorCount;
+    uint8_t _consecutiveReadFailures;
     uint32_t _lastD1;
     uint32_t _lastD2;
     uint8_t _lastPromReadIndex;

@@ -52,7 +52,7 @@ void SensorHub::displayAll() {
     Serial.println(F("\n================ ALL SENSORS ================"));
 
     Serial.print(F("Depth: "));
-    if (_depthMgr) {
+    if (_depthMgr && _depthMgr->isValid()) {
         Serial.print(_depthMgr->getDepthCm(), 2);
         Serial.print(F(" cm | vz="));
         Serial.print(_depthMgr->getDepthSpeedCmS(), 2);
@@ -60,7 +60,7 @@ void SensorHub::displayAll() {
         Serial.print(_depthMgr->getDepthAccelCmS2(), 2);
         Serial.println(F(" cm/s^2"));
     } else {
-        Serial.println(F("disabled"));
+        Serial.println(F("offline"));
     }
 
     if (_ultrasonicMgr) {
@@ -89,7 +89,7 @@ void SensorHub::displayAll() {
 
 void SensorHub::displayCompact() {
     Serial.print(F("Sensors: depth="));
-    if (_depthMgr) {
+    if (_depthMgr && _depthMgr->isValid()) {
         Serial.print(_depthMgr->getDepthCm(), 1);
         Serial.print(F("cm"));
     } else {

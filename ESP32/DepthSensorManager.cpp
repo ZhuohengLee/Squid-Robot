@@ -17,7 +17,8 @@ constexpr uint8_t MS5837_CMD_CONVERT_D2_8192 = 0x5A;
 constexpr uint32_t MS5837_RESET_DELAY_MS = 20;
 constexpr uint32_t MS5837_CONVERSION_DELAY_MS = 20;
 constexpr uint32_t SAMPLE_INTERVAL_MS = 50;
-constexpr uint32_t DATA_TIMEOUT_MS = 2000;
+constexpr uint32_t DATA_TIMEOUT_MS = 250;
+constexpr uint8_t MAX_CONSECUTIVE_READ_FAILURES = 3;
 constexpr uint8_t PROM_WORD_COUNT = 7;
 constexpr uint8_t PROM_READ_RETRIES = 3;
 constexpr uint8_t ADC_READ_RETRIES = 3;
@@ -45,6 +46,7 @@ DepthSensorManager::DepthSensorManager()
       _lastSampleMs(0),
       _sampleCount(0),
       _readErrorCount(0),
+      _consecutiveReadFailures(0),
       _lastD1(0),
       _lastD2(0),
       _lastPromReadIndex(0xFF),
@@ -67,6 +69,7 @@ bool DepthSensorManager::begin() {
     _lastSampleMs = 0;
     _sampleCount = 0;
     _readErrorCount = 0;
+    _consecutiveReadFailures = 0;
     _lastD1 = 0;
     _lastD2 = 0;
     _lastPromReadIndex = 0xFF;
@@ -103,6 +106,7 @@ void DepthSensorManager::update() {
         float pressureMbar = 0.0f;
         float temperatureC = 0.0f;
         if (readMeasurement(pressureMbar, temperatureC)) {
+            _consecutiveReadFailures = 0;
             if (!_zeroReferenceValid) {
                 _zeroPressureMbar = pressureMbar;
                 _zeroReferenceValid = true;
@@ -115,6 +119,16 @@ void DepthSensorManager::update() {
             ++_sampleCount;
         } else {
             ++_readErrorCount;
+            if (_consecutiveReadFailures < 0xFF) {
+                ++_consecutiveReadFailures;
+            }
+
+            if (_consecutiveReadFailures >= MAX_CONSECUTIVE_READ_FAILURES) {
+                _valid = false;
+                _filterInitialized = false;
+                _depthSpeedCmS = 0.0f;
+                _depthAccelCmS2 = 0.0f;
+            }
         }
     }
 

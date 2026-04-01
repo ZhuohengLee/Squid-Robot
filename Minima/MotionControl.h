@@ -1,7 +1,11 @@
 /**********************************************************************
  * MotionControl.h
  *
- * Low-level Minima actuator executor with software-PWM buoyancy output.
+ * Minima 底层执行器驱动（前进/转向/浮沉）。
+ *
+ * 前进/转向：掩码驱动，applyMask() 收到帧后立即写引脚。
+ * 浮沉：     软件 PWM 驱动，update() 每帧计算占空比并控制气泵。
+ *            阀门方向切换有 200ms 防抖延迟，防止机械冲击。
  *********************************************************************/
 
 #ifndef MOTION_CONTROL_H
@@ -16,9 +20,17 @@ public:
     MotionController();
 
     void begin();
+
+    // 接收执行器掩码并立即写前进/转向引脚。
     void applyMask(uint16_t mask);
+
+    // 设置浮沉请求；实际输出由 update() 每帧执行。
     void applyBuoyancy(uint8_t direction, uint8_t pwm);
+
+    // 每帧调用：处理浮沉软件 PWM 输出。
     void update();
+
+    // 全局急停：清空所有状态并立即关闭全部引脚。
     void emergencyStopAll();
 
     uint16_t getMask() const;

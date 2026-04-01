@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Auto Push"
+  short_description: "Compile, sync README, and push intended edits."
+  default_prompt: "Use $github-auto-push to make the requested code changes, verify the project compiles, sync the README with the implementation, and push the result to GitHub."

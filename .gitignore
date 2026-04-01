@@ -1,6 +1,7 @@
 .render/
 .tmp/
 ESP32/OtaConfig.local.h
+V6_HC12遥控/ESP32_V6/OtaConfig.local.h
 
 # Prerequisites
 *.d
