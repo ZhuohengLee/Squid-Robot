@@ -15,7 +15,6 @@ constexpr float CONTROL_TRIGGER = 8.0f;
 constexpr uint8_t PUMP_PWM_MIN = 80;
 constexpr uint8_t PUMP_PWM_MAX = 255;
 constexpr uint8_t MANUAL_PWM = 255;
-constexpr uint32_t MANUAL_DURATION_MS = 1500;
 }
 
 DepthController::DepthController()
@@ -38,7 +37,9 @@ DepthController::DepthController()
       _buoyancyDirection(BUOYANCY_STOP),
       _buoyancyPwm(0),
       _lastControlUpdateMs(0),
-      _manualStartMs(0) {}
+      _balancing(false),
+      _balanceEndMs(0),
+      _balanceStartMs(0) {}
 
 void DepthController::begin() {
     resetAfterCalibration();
@@ -49,14 +50,29 @@ void DepthController::update(bool depthValid,
                              float depthSpeedCmS,
                              float depthAccelCmS2,
                              uint32_t nowMs) {
-    if (_manualDirection != BUOYANCY_STOP) {
-        if (nowMs - _manualStartMs >= MANUAL_DURATION_MS) {
-            manualStop();
+    // 全局气压平衡：每 500ms 交替输出 BALANCE / STOP，持续 5s。
+    if (_balancing) {
+        if (nowMs >= _balanceEndMs) {
+            _balancing = false;
+            stopBuoyancyOutput();
             return;
         }
-        _controlOutput = _manualDirection == BUOYANCY_DESCEND ? 100.0f : -100.0f;
+        // 每 500ms 切换一次相位
+        const bool openPhase = ((nowMs - _balanceStartMs) / 500) % 2 == 0;
+        if (openPhase) {
+            _buoyancyDirection = BUOYANCY_BALANCE;
+            _buoyancyPwm       = 0;
+        } else {
+            _buoyancyDirection = BUOYANCY_STOP;
+            _buoyancyPwm       = 0;
+        }
+        return;
+    }
+
+    if (_manualDirection != BUOYANCY_STOP) {
+        _controlOutput     = (_manualDirection == BUOYANCY_DESCEND) ? 100.0f : -100.0f;
         _buoyancyDirection = _manualDirection;
-        _buoyancyPwm = MANUAL_PWM;
+        _buoyancyPwm       = MANUAL_PWM;
         return;
     }
 
@@ -153,25 +169,46 @@ bool DepthController::isHoldingTarget() const {
 
 void DepthController::manualAscend() {
     clearTarget();
-    _manualDirection = BUOYANCY_ASCEND;
-    _manualStartMs = millis();
-    _controlOutput = -100.0f;
-    _buoyancyDirection = BUOYANCY_ASCEND;
-    _buoyancyPwm = MANUAL_PWM;
+    _balancing = false;   // 新指令立即中止气压平衡
+    if (_manualDirection == BUOYANCY_ASCEND) {
+        // 同方向再按：切换停止，关闭阀门
+        manualStop();
+    } else {
+        // 从停止或下沉切换到上浮，持续运行直到下一次命令
+        _manualDirection   = BUOYANCY_ASCEND;
+        _buoyancyDirection = BUOYANCY_ASCEND;
+        _buoyancyPwm       = MANUAL_PWM;
+        _controlOutput     = -100.0f;
+    }
 }
 
 void DepthController::manualDescend() {
     clearTarget();
-    _manualDirection = BUOYANCY_DESCEND;
-    _manualStartMs = millis();
-    _controlOutput = 100.0f;
-    _buoyancyDirection = BUOYANCY_DESCEND;
-    _buoyancyPwm = MANUAL_PWM;
+    _balancing = false;   // 新指令立即中止气压平衡
+    if (_manualDirection == BUOYANCY_DESCEND) {
+        // 同方向再按：切换停止，关闭阀门
+        manualStop();
+    } else {
+        // 从停止或上浮切换到下沉，持续运行直到下一次命令
+        _manualDirection   = BUOYANCY_DESCEND;
+        _buoyancyDirection = BUOYANCY_DESCEND;
+        _buoyancyPwm       = MANUAL_PWM;
+        _controlOutput     = 100.0f;
+    }
 }
 
 void DepthController::manualStop() {
     _manualDirection = BUOYANCY_STOP;
-    stopBuoyancyOutput();
+    stopBuoyancyOutput();  // direction=STOP, pwm=0 → Minima 关闭所有阀门和泵
+}
+
+void DepthController::forceBalance() {
+    // 急停后气压平衡：500ms 交替开关 E/F（同时通断），持续 5s，泵始终关闭。
+    clearTarget();
+    _manualDirection = BUOYANCY_STOP;
+    _balancing       = true;
+    _balanceEndMs    = millis() + 5000;
+    _balanceStartMs  = millis();
 }
 
 void DepthController::resetAfterCalibration() {
@@ -184,11 +221,13 @@ void DepthController::resetAfterCalibration() {
     _errPrev = 0.0f;
     _derivPrev = 0.0f;
     _controlOutput = 0.0f;
-    _manualDirection = BUOYANCY_STOP;
-    _buoyancyDirection = BUOYANCY_STOP;
-    _buoyancyPwm = 0;
+    _manualDirection     = BUOYANCY_STOP;
+    _buoyancyDirection   = BUOYANCY_STOP;
+    _buoyancyPwm         = 0;
     _lastControlUpdateMs = 0;
-    _manualStartMs = 0;
+    _balancing           = false;
+    _balanceEndMs        = 0;
+    _balanceStartMs      = 0;
 }
 
 float DepthController::getFilteredDepthCm() const {
@@ -217,6 +256,10 @@ uint8_t DepthController::getBuoyancyDirection() const {
 
 uint8_t DepthController::getBuoyancyPwm() const {
     return _buoyancyPwm;
+}
+
+uint8_t DepthController::getManualDirection() const {
+    return _manualDirection;
 }
 
 void DepthController::adaptivePID(float err, float derr, float spd, float dt) {

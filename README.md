@@ -2,23 +2,34 @@
 
 双 MCU 水下机器人固件。
 
-## 当前架构（V6）
+## 当前架构（V7）
 
 - `ESP32/`
-  主控。负责读取深度和超声波、做卡尔曼滤波、自动避障、深度控制、HC-12 无线接收、串口命令和 OTA。
+  主控。负责读取深度和超声波、做卡尔曼滤波、自动避障、深度控制、HC-12 无线接收、SD 卡数据记录、串口命令和 OTA。
 - `Minima/`
   执行端。负责按位驱动气泵和电磁阀，不含任何逻辑。
 - `Minima_Bridge/`
   HC-12 透传桥接端（Arduino UNO R4 Minima）。连接电脑，通过 HC-12 无线模块将电脑串口命令透传到机器人；支持双端信道配对。
 
-## V6 版本变更
+## V7 版本变更
 
-- **HC-12 无线遥控**：新增 HC-12 串口通道（ESP32 Serial2 IO1/IO2/IO47），电脑通过 `Minima_Bridge` 无线发送控制命令；
-- **双端信道配对**：发送端发 `HC025` 切换本地信道，发送 `ESP025` 透传让机器人端切换信道；
-- **网页 WiFi 配网**：OTA 新增 Captive Portal，30s 内未连接已知 WiFi 自动开启热点 `SquidRobot-Setup`，扫描并填写新 WiFi 后持久化保存；
-- **水下 WiFi 管理**：启动时 3s 超声波预检测，水中跳过 WiFi；运行中检测到超声波读数自动关闭 WiFi；出水 30s 后自动重启重连；
-- **CH9434A 启动容错**：SPI 初始化失败自动重试 5 次，全部失败则软复位 MCU；
-- **前进阀切换间隔**：调整为 500 ms。
+- **DEBUG / TEST 双模式**：开机默认 DEBUG 模式（WiFi 开、网页控制台可用）；三路超声波同时有效并持续 10 秒后自动进入 TEST 模式（WiFi 关、SD 记录启动）；三路全部失效持续 10 秒自动退回 DEBUG；`mt` / `md` 命令手动切换；
+- **SD 卡数据记录**：进入 TEST 模式时按 NTP 时间戳建文件夹，记录：
+  - `sensors.csv` — 深度 / 速度 / 加速度 / 三路超声波 / 运动状态 / 电池电压（5 Hz）
+  - `commands.csv` — 所有收到的命令（来源：serial / hc12 / web）
+  - `events.log` — 系统事件（模式切换、急停、mark 标记等）
+  - 文件夹名碰撞自动追加后缀（`_1`/`_2`...），绝不覆盖历史 session；
+  - `sensors.csv` 保持打开，每 5 行（1 秒）flush 一次，断电最多丢 1 秒数据；
+- **浏览器统一控制台**（`http://<IP>/console`）：
+  - 上半部分：SD 文件管理（浏览、下载、批量勾选、ZIP 打包下载文件夹、上传、递归删除）
+  - 下半部分：实时串口控制台（250ms 轮询，按字节 pos 前进，中文不漂移）
+  - 纯 HTTP，手机 / 电脑 / 平板浏览器直接打开，零安装；
+- **OTA 配网改为纯网页配网**：不再依赖硬编码 SSID，上电后优先尝试 NVS 保存的 WiFi（10s），失败则开启 `SquidRobot-Setup` 热点；
+- **j/k 浮沉命令改为切换式（toggle）**：同向再按停止，异向直接切换；
+- **浮沉 s 急停新增气压平衡**（E/F 同时交替开关，500ms/5s）；
+- **前进阀切换间隔调整为 1s**；
+- **删除 Python FTP 工具**（`Tools/FTPBrowser`）——已被浏览器控制台完全替代；
+- **删除 `Test_GPIO/`**。
 
 ## 数据链路
 
@@ -44,6 +55,8 @@ flowchart LR
   USR["Right Ultrasonic"] --> CH
   CH -->|SPI + UART channels| ESP
 
+  SD["SD Card"] -->|HSPI| ESP
+
   ESP -->|Actuator mask / UART| MIN["Arduino Minima\nActuator Executor"]
   MIN -->|Status / Heartbeat| ESP
 
@@ -52,12 +65,14 @@ flowchart LR
     ESP2["Auto Navigation"]
     ESP3["Depth Hold Control"]
     ESP4["Actuator Mask Generation"]
+    ESP5["SD Logger (5 Hz)"]
   end
 
   ESP --- ESP1
   ESP --- ESP2
   ESP --- ESP3
   ESP --- ESP4
+  ESP --- ESP5
 
   subgraph MinimaPins["Minima GPIO to Actuator Control Pins"]
     M2["GPIO2"] --> PA["Pump A Control Pin"]
@@ -135,6 +150,17 @@ flowchart LR
 - `UART0 -> Right`
 - `UART3 -> Unused`
 
+### SD 卡（SPI3/HSPI，独立总线）
+
+定义在 [ESP32/Protocol.h](ESP32/Protocol.h)：
+
+- `SD_SPI_MOSI = IO6`
+- `SD_SPI_MISO = IO7`
+- `SD_SPI_SCK  = IO8`
+- `SD_SPI_CS   = IO14`
+
+SD 卡使用独立 HSPI 总线，与 CH9434A 的 VSPI 不共享。FAT32 格式化。
+
 ### HC-12 无线模块（机器人端）
 
 定义在 [ESP32/Protocol.h](ESP32/Protocol.h)：
@@ -175,7 +201,35 @@ flowchart LR
 - `VALVE_H = 9`
 - `VALVE_I = 10`
 
-## 控制说明
+## 运行模式
+
+### DEBUG 模式（默认）
+
+- WiFi 开启，HTTP 服务可用
+- 浏览器打开 `http://<IP>/console` 查看文件和串口
+- OTA 固件更新可用
+- SD 卡不记录
+
+### TEST 模式
+
+进入条件（任一）：
+- **自动**：三路超声波同时有效 ≥ 10 秒（入水检测）
+- **手动**：发送 `mt` 命令（不受出水超时自动退出）
+
+退出条件（任一）：
+- **自动**：三路超声波全部失效 ≥ 10 秒（出水检测，仅自动进入时生效）
+- **手动**：发送 `md` 命令
+
+进入时：
+- WiFi 关闭（省电 + 减少水下干扰）
+- SD 卡以 NTP 时间戳建文件夹，开始 5 Hz 记录
+- 串口切回 USB（无 WebConsole）
+
+退出时：
+- SD flush + close（数据安全落盘）
+- WiFi 重新启动，Web 控制台恢复
+
+## 控制命令
 
 ### 有线串口
 
@@ -194,20 +248,55 @@ flowchart LR
 
 > 正确顺序：先发 `ESP025`，收到机器人回复后再发 `HC025`。
 
-### 控制命令
+### 命令列表
 
-- `q` 切换 `MANUAL / AUTO`
-- `w` 前进
-- `a` 左转
-- `d` 右转
-- `j` 上浮
-- `k` 下潜
-- `l<number>` 定深到指定厘米，例如 `l35`
-- `s` 急停
-- `c` 以当前压力重新校准深度零点
-- `g` 打印当前传感器状态
-- `v` 开关详细状态输出
-- `h` 显示帮助
+| 命令 | 说明 |
+|------|------|
+| `w` / `forward` | 前进 |
+| `a` / `left` | 左转 |
+| `d` / `right` | 右转 |
+| `j` / `ascend` | 上浮（toggle：再按停止） |
+| `k` / `descend` | 下潜（toggle：再按停止） |
+| `l<N>` | 定深到 N 厘米，例如 `l35` |
+| `s` / `stop` | 急停（含气压平衡） |
+| `c` / `calibrate` | 以当前压力重新校准深度零点 |
+| `g` / `sensors` | 打印当前传感器状态 |
+| `v` / `verbose` | 开关详细状态输出 |
+| `q` | 切换 MANUAL / AUTO |
+| `mt` | 手动进入 TEST 模式 |
+| `md` | 手动进入 DEBUG 模式 |
+| `stat` | 打印 SD 卡 session 状态和文件大小 |
+| `mark [note]` | 在 events.log 中插入标记 |
+| `h` / `help` | 显示帮助 |
+
+## 浏览器控制台
+
+DEBUG 模式下，浏览器打开 `http://<IP>/console`。
+
+**文件管理（上半部分）：**
+
+- 浏览 SD 卡目录结构
+- 勾选框批量选择文件/文件夹
+- 单文件直接下载；多选或文件夹自动 ZIP 打包下载（需浏览器能访问 cdnjs）
+- 上传文件（支持多选）
+- 递归删除（可删非空文件夹）
+
+**串口控制台（下半部分）：**
+
+- 250ms 轮询，实时显示 ESP32 串口输出
+- 输入框发送命令（本地回显 `> cmd`）
+- 中文正确显示（按字节追踪 pos，不依赖 JS string.length）
+
+**HTTP API（供自定义工具使用）：**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/files?path=/` | 列出目录，返回 JSON |
+| `GET` | `/file?path=/x/y` | 下载文件 |
+| `POST` | `/upload?path=/dir` | multipart/form-data 上传 |
+| `DELETE` | `/file?path=/x/y` | 递归删除文件或目录 |
+| `GET` | `/log?p=<pos>` | 获取串口日志（pos 之后的部分） |
+| `POST` | `/cmd` | 发送命令（body 为纯文本） |
 
 ## OTA
 
@@ -215,25 +304,29 @@ flowchart LR
 
 **首次连接流程：**
 
-1. 上电，等待 30s；若已知 WiFi 不可用，`ESP32` 自动开启热点 `SquidRobot-Setup`（无密码）；
-2. 连接热点，打开任意网页，自动跳转配网页面；
-3. 选择 WiFi 并输入密码，提交后凭据保存到 NVS；
-4. 之后上电自动连接，无需重复配网。
+1. 上电，等待 10s 尝试连接 NVS 保存的 WiFi；
+2. 若失败，自动开启热点 `SquidRobot-Setup`（无密码）；
+3. 连接热点，打开任意网页，自动跳转配网页面；
+4. 选择 WiFi 并输入密码，提交后凭据保存到 NVS；
+5. 之后上电自动连接，无需重复配网。
 
 **OTA 烧录：**
 
 - 主机名：`squid-robot`
 - OTA 密码：`12345678`
 
-**水下保护：**
+## SD 数据可靠性
 
-- 上电时若 3s 内检测到超声波读数（已在水中），跳过全部 WiFi 初始化；
-- 入水后检测到超声波读数，自动关闭 WiFi；
-- 出水后 30s 无超声波读数，自动重启重连 WiFi。
+- `sensors.csv` 保持打开，每 5 行（1 秒）调用 `flush()` 同步 FAT 元数据；
+- `commands.csv` / `events.log` 每次写入后立即 `close()`；
+- 正常退出（`md` 或自动出水）：`endSession()` 强制 `flush + close`，**0 行丢失**；
+- 异常断电 / 崩溃：最多丢失 **≤ 5 行 = 1 秒** 的 `sensors.csv` 尾部数据；
+- 文件夹名冲突自动追加 `_1` / `_2` ...，**绝不覆盖历史 session**；
+- SD 使用独立 HSPI 总线（IO6/7/8/14），不与 CH9434A 的 VSPI 冲突。
 
 ## Forward Control Notes
 
-- The forward propulsion valves (Valve B + Valve C) toggle every `500 ms` during normal propulsion.
+- The forward propulsion valves (Valve B + Valve C) toggle every `1000 ms` during normal propulsion.
 - On `stop()`, a balance phase begins: valves alternate every `500 ms` for `5000 ms` to equalize pressure and return the diaphragm to center.
 - All forward timing is managed entirely by the `ESP32`; `Minima` only executes the actuator mask.
 

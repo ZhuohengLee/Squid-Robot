@@ -5,6 +5,7 @@
  *********************************************************************/
 
 #include "StatusDisplay.h"
+#include "TeeStream.h"
 
 StatusDisplay::StatusDisplay()
     : _verboseMode(false),
@@ -52,12 +53,12 @@ void StatusDisplay::processMinimaFeedback() {
 
 void StatusDisplay::enableVerbose() {
     _verboseMode = true;
-    Serial.println(F("\nVerbose mode enabled\n"));
+    g_dbg->println(F("\nVerbose mode enabled\n"));
 }
 
 void StatusDisplay::disableVerbose() {
     _verboseMode = false;
-    Serial.println(F("\nVerbose mode disabled\n"));
+    g_dbg->println(F("\nVerbose mode disabled\n"));
 }
 
 void StatusDisplay::toggleVerbose() {
@@ -87,12 +88,12 @@ void StatusDisplay::processMotionStatus(uint8_t status) {
         return;
     }
 
-    Serial.print(F("<- Motion: "));
-    if (status & 0x01) Serial.print(F("FWD "));
-    if (status & 0x02) Serial.print(F("TURN "));
-    if (status & 0x04) Serial.print(F("BUOY "));
-    if (status == 0) Serial.print(F("IDLE"));
-    Serial.println();
+    g_dbg->print(F("<- Motion: "));
+    if (status & 0x01) g_dbg->print(F("FWD "));
+    if (status & 0x02) g_dbg->print(F("TURN "));
+    if (status & 0x04) g_dbg->print(F("BUOY "));
+    if (status == 0) g_dbg->print(F("IDLE"));
+    g_dbg->println();
 }
 
 void StatusDisplay::processHeartbeat() {

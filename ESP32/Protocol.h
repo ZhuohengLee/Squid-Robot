@@ -24,12 +24,25 @@
 #define HC12_RX_PIN           1
 #define HC12_SET_PIN          47
 
-// ESP32 和 CH9434A 的 SPI 接线。
+// ESP32 和 CH9434A 的 SPI 接线（SPI2/FSPI）。
 #define SPI_MOSI              11
 #define SPI_MISO              13
 #define SPI_SCK               12
 #define SPI_CS                10
-#define CH9434A_INT           14
+#define CH9434A_INT            9   // 原理图实际接线 IO9
+
+// SD 卡 SPI 接线（SPI3/HSPI，独立总线）。
+#define SD_SPI_MOSI            6
+#define SD_SPI_MISO            7
+#define SD_SPI_SCK             8
+#define SD_SPI_CS             14
+
+// 电池电压 ADC（分压：R1=390kΩ实测350kΩ, R2=100kΩ，校准比值 5.507）
+#define BATT_ADC_PIN        3
+constexpr float BATT_DIVIDER_RATIO = 5.507f;
+constexpr float BATT_ADC_REF_V     = 3.114f;
+constexpr float BATT_ADC_MAX       = 4095.0f;
+constexpr uint8_t BATT_SAMPLES     = 16;
 
 // MS5837 深度传感器直连 ESP32 I2C 总线。
 #define DEPTH_I2C_ADDRESS     0x76
@@ -94,6 +107,7 @@ constexpr uint16_t ACT_BUOYANCY_GROUP =
 constexpr uint8_t BUOYANCY_STOP    = 0;
 constexpr uint8_t BUOYANCY_ASCEND  = 1;
 constexpr uint8_t BUOYANCY_DESCEND = 2;
+constexpr uint8_t BUOYANCY_BALANCE = 3; // 气压平衡：E/F 同时通电，泵关闭
 
 // CRC8 校验函数，ESP32 和 Minima 两侧保持一致。
 inline uint8_t calculateCRC8(uint8_t* data, uint8_t len) {

@@ -44,14 +44,13 @@ void MotionController::applyMask(uint16_t mask) {
 }
 
 void MotionController::applyBuoyancy(uint8_t direction, uint8_t pwm) {
-    if (direction == BUOYANCY_STOP || pwm == 0) {
+    if (direction == BUOYANCY_STOP || (pwm == 0 && direction != BUOYANCY_BALANCE)) {
         _requestedBuoyancyDirection = BUOYANCY_STOP;
-        _requestedBuoyancyPwm = 0;
+        _requestedBuoyancyPwm       = 0;
         return;
     }
-
     _requestedBuoyancyDirection = direction;
-    _requestedBuoyancyPwm = pwm;
+    _requestedBuoyancyPwm       = pwm;
 }
 
 void MotionController::update() {
@@ -149,6 +148,16 @@ void MotionController::writeBuoyancyOutputs(uint32_t nowMs) {
         return;
     }
 
+    // 气压平衡模式：E/F 同时通电，泵关闭。
+    if (_requestedBuoyancyDirection == BUOYANCY_BALANCE) {
+        _appliedBuoyancyDirection = BUOYANCY_BALANCE;
+        _appliedBuoyancyPwm = 0;
+        digitalWrite(PUMP_G_PIN,  LOW);
+        digitalWrite(VALVE_E_PIN, HIGH);
+        digitalWrite(VALVE_F_PIN, HIGH);
+        return;
+    }
+
     // 换向保护：方向切换时等待 VALVE_MIN_INTERVAL_MS，期间关泵防止冲击。
     if (_requestedBuoyancyDirection != _appliedBuoyancyDirection) {
         if (nowMs - _lastValveChangeMs >= VALVE_MIN_INTERVAL_MS) {
@@ -163,10 +172,13 @@ void MotionController::writeBuoyancyOutputs(uint32_t nowMs) {
 
     _appliedBuoyancyPwm = _requestedBuoyancyPwm;
 
-    // 浮力阀 e/f 同步控制：下沉时同时打开，上浮时同时关闭。
-    const bool descend = _appliedBuoyancyDirection == BUOYANCY_DESCEND;
-    digitalWrite(VALVE_E_PIN, descend ? HIGH : LOW);
-    digitalWrite(VALVE_F_PIN, descend ? HIGH : LOW);
+    // 浮力阀 e/f 差动控制（电磁阀做气压隔离）：
+    //   上浮：E 通电，F 断电
+    //   下沉：E 断电，F 通电
+    //   停止：E F 全断电（由上层 STOP 分支处理，此处不会到达）
+    const bool ascend = _appliedBuoyancyDirection == BUOYANCY_ASCEND;
+    digitalWrite(VALVE_E_PIN, ascend ? HIGH : LOW);
+    digitalWrite(VALVE_F_PIN, ascend ? LOW  : HIGH);
 
     // 软件 PWM：按占空比控制浮力泵。
     const uint32_t dutyUs =

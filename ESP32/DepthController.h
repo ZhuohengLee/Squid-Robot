@@ -30,6 +30,7 @@ public:
     void manualAscend();
     void manualDescend();
     void manualStop();
+    void forceBalance();   // 气压平衡：500ms 交替开关 E/F，持续 5s
 
     void resetAfterCalibration();
 
@@ -41,6 +42,7 @@ public:
 
     uint8_t getBuoyancyDirection() const;
     uint8_t getBuoyancyPwm() const;
+    uint8_t getManualDirection() const;  // BUOYANCY_STOP / ASCEND / DESCEND
 
 private:
     void adaptivePID(float err, float derr, float spd, float dt);
@@ -66,11 +68,13 @@ private:
     float _ki;
     float _kd;
 
-    uint8_t _manualDirection;
-    uint8_t _buoyancyDirection;
-    uint8_t _buoyancyPwm;
+    uint8_t  _manualDirection;
+    uint8_t  _buoyancyDirection;
+    uint8_t  _buoyancyPwm;
     uint32_t _lastControlUpdateMs;
-    uint32_t _manualStartMs;
+    bool     _balancing;         // 全局气压平衡进行中
+    uint32_t _balanceStartMs;    // 平衡开始时间戳
+    uint32_t _balanceEndMs;      // 平衡结束时间戳
 };
 
 #endif // ESP32_DEPTH_CONTROLLER_H

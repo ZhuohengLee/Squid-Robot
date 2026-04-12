@@ -17,8 +17,10 @@
 namespace {
 constexpr uint32_t TURN_DURATION_MS        = 1000; // 右转推进持续时间
 constexpr uint32_t TURN_BALANCE_DELAY_MS   =   10; // 转向结束后延迟多久开始平衡
-constexpr uint32_t TURN_BALANCE_TIME_MS    =  200; // 平衡窗口总时长
-constexpr uint32_t TURN_BALANCE_ALT_MS     =  100; // 平衡窗口内每路阀门打开时长
+constexpr uint32_t TURN_BALANCE_TIME_MS    =  200; // 正常平衡窗口总时长
+constexpr uint32_t TURN_BALANCE_ALT_MS     =  100; // 正常平衡每路阀门打开时长
+constexpr uint32_t GLOBAL_BALANCE_TIME_MS  = 5000; // 全局平衡（s 命令）总时长
+constexpr uint32_t GLOBAL_BALANCE_ALT_MS   =  500; // 全局平衡每路阀门打开时长
 }
 
 RightTurnControl::RightTurnControl()
@@ -27,7 +29,9 @@ RightTurnControl::RightTurnControl()
       _balanceValveOpen(false),
       _balanceAltPhase(false),
       _startMs(0),
-      _balanceStartMs(0) {}
+      _balanceStartMs(0),
+      _balanceAltMs(TURN_BALANCE_ALT_MS),
+      _balanceTotalMs(TURN_BALANCE_TIME_MS) {}
 
 void RightTurnControl::begin() {
     cancel();
@@ -50,6 +54,18 @@ void RightTurnControl::cancel() {
     _balanceStartMs   = 0;
 }
 
+void RightTurnControl::forceBalance() {
+    // 不管当前状态，直接进入全局平衡（500ms/5s）。
+    _running          = false;
+    _balancing        = true;
+    _balanceValveOpen = false;
+    _balanceAltPhase  = false;
+    _startMs          = 0;
+    _balanceStartMs   = 0;
+    _balanceAltMs     = GLOBAL_BALANCE_ALT_MS;
+    _balanceTotalMs   = GLOBAL_BALANCE_TIME_MS;
+}
+
 void RightTurnControl::update(uint32_t nowMs) {
     // 推进阶段：计时结束后进入平衡阶段。
     // _startMs == 0 表示本轮刚启动，延迟到这里初始化，保证与 nowMs 基准一致。
@@ -62,6 +78,8 @@ void RightTurnControl::update(uint32_t nowMs) {
         _balanceValveOpen = false;
         _balanceAltPhase  = false;
         _balanceStartMs   = nowMs;
+        _balanceAltMs     = TURN_BALANCE_ALT_MS;
+        _balanceTotalMs   = TURN_BALANCE_TIME_MS;
     }
 
     // 平衡阶段：在平衡窗口内每 TURN_BALANCE_ALT_MS 切换交替相位。
@@ -70,14 +88,14 @@ void RightTurnControl::update(uint32_t nowMs) {
 
         _balanceValveOpen =
             elapsed >= TURN_BALANCE_DELAY_MS &&
-            elapsed < TURN_BALANCE_DELAY_MS + TURN_BALANCE_TIME_MS;
+            elapsed < TURN_BALANCE_DELAY_MS + _balanceTotalMs;
 
         if (_balanceValveOpen) {
             const uint32_t inWindow = elapsed - TURN_BALANCE_DELAY_MS;
-            _balanceAltPhase = (inWindow / TURN_BALANCE_ALT_MS) % 2 != 0;
+            _balanceAltPhase = (inWindow / _balanceAltMs) % 2 != 0;
         }
 
-        if (elapsed >= TURN_BALANCE_DELAY_MS + TURN_BALANCE_TIME_MS) {
+        if (elapsed >= TURN_BALANCE_DELAY_MS + _balanceTotalMs) {
             _balancing        = false;
             _balanceValveOpen = false;
             _balanceAltPhase  = false;

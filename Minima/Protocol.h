@@ -46,9 +46,10 @@ constexpr uint16_t ACT_TURN_GROUP =
 constexpr uint16_t ACT_BUOYANCY_GROUP =
     ACT_BUOYANCY_PUMP | ACT_BUOYANCY_VALVE_E | ACT_BUOYANCY_VALVE_F;
 
-constexpr uint8_t BUOYANCY_STOP = 0;
-constexpr uint8_t BUOYANCY_ASCEND = 1;
+constexpr uint8_t BUOYANCY_STOP    = 0;
+constexpr uint8_t BUOYANCY_ASCEND  = 1;
 constexpr uint8_t BUOYANCY_DESCEND = 2;
+constexpr uint8_t BUOYANCY_BALANCE = 3; // 气压平衡：E/F 同时通电，泵关闭
 
 struct ProtocolFrame {
     uint8_t cmd;

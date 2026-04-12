@@ -5,16 +5,19 @@
  *********************************************************************/
 
 #include "SensorHub.h"
+#include "Protocol.h"
+#include "TeeStream.h"
 
 namespace {
 constexpr uint32_t DISPLAY_INTERVAL_MS = 1000;
+constexpr uint32_t BATT_UPDATE_MS      = 2000;  // 电压每 2 秒采样一次
 const char* SENSOR_NAMES[NUM_ULTRASONIC] = {"Front", "Left ", "Right"};
 
 void printMotionFlags(uint8_t status) {
-    if (status & 0x01) Serial.print(F("FWD "));
-    if (status & 0x02) Serial.print(F("TURN "));
-    if (status & 0x04) Serial.print(F("BUOY "));
-    if (status == 0) Serial.print(F("IDLE"));
+    if (status & 0x01) g_dbg->print(F("FWD "));
+    if (status & 0x02) g_dbg->print(F("TURN "));
+    if (status & 0x04) g_dbg->print(F("BUOY "));
+    if (status == 0) g_dbg->print(F("IDLE"));
 }
 }
 
@@ -22,7 +25,11 @@ SensorHub::SensorHub()
     : _depthMgr(nullptr),
       _statusDisplay(nullptr),
       _ultrasonicMgr(nullptr),
-      _lastDisplay(0) {}
+      _lastDisplay(0),
+      _lastBattMs(0),
+      _lastBattV(0.0f) {
+    analogSetAttenuation(ADC_11db);
+}
 
 void SensorHub::setDepthSensorManager(DepthSensorManager* manager) {
     _depthMgr = manager;
@@ -34,6 +41,24 @@ void SensorHub::setStatusDisplay(StatusDisplay* display) {
 
 void SensorHub::setUltrasonicManager(UltrasonicManager* manager) {
     _ultrasonicMgr = manager;
+}
+
+float SensorHub::readBatteryVoltage() const {
+    uint32_t sum = 0;
+    for (uint8_t i = 0; i < BATT_SAMPLES; i++) {
+        sum += analogRead(BATT_ADC_PIN);
+        delayMicroseconds(200);
+    }
+    float vgpio = (float)(sum / BATT_SAMPLES) / BATT_ADC_MAX * BATT_ADC_REF_V;
+    return vgpio * BATT_DIVIDER_RATIO;
+}
+
+void SensorHub::updateBattery() {
+    const uint32_t now = millis();
+    if (now - _lastBattMs >= BATT_UPDATE_MS) {
+        _lastBattMs = now;
+        _lastBattV  = readBatteryVoltage();
+    }
 }
 
 void SensorHub::calibrateDepthZero() {
@@ -49,69 +74,88 @@ void SensorHub::displayAll() {
     }
     _lastDisplay = now;
 
-    Serial.println(F("\n================ ALL SENSORS ================"));
+    g_dbg->println(F("\n================ ALL SENSORS ================"));
 
-    Serial.print(F("Depth: "));
+    g_dbg->print(F("Depth: "));
     if (_depthMgr) {
-        Serial.print(_depthMgr->getDepthCm(), 2);
-        Serial.print(F(" cm | vz="));
-        Serial.print(_depthMgr->getDepthSpeedCmS(), 2);
-        Serial.print(F(" cm/s | az="));
-        Serial.print(_depthMgr->getDepthAccelCmS2(), 2);
-        Serial.println(F(" cm/s^2"));
+        g_dbg->print(_depthMgr->getDepthCm(), 2);
+        g_dbg->print(F(" cm | vz="));
+        g_dbg->print(_depthMgr->getDepthSpeedCmS(), 2);
+        g_dbg->print(F(" cm/s | az="));
+        g_dbg->print(_depthMgr->getDepthAccelCmS2(), 2);
+        g_dbg->println(F(" cm/s^2"));
     } else {
-        Serial.println(F("disabled"));
+        g_dbg->println(F("disabled"));
     }
 
     if (_ultrasonicMgr) {
         for (uint8_t sensor = 0; sensor < NUM_ULTRASONIC; ++sensor) {
-            Serial.print(F("Ultrasonic "));
-            Serial.print(SENSOR_NAMES[sensor]);
-            Serial.print(F(": "));
+            g_dbg->print(F("Ultrasonic "));
+            g_dbg->print(SENSOR_NAMES[sensor]);
+            g_dbg->print(F(": "));
 
             if (_ultrasonicMgr->isValid(sensor)) {
-                Serial.print(_ultrasonicMgr->getDistance(sensor) / 10.0f, 1);
-                Serial.println(F(" cm"));
+                g_dbg->print(_ultrasonicMgr->getDistance(sensor) / 10.0f, 1);
+                g_dbg->println(F(" cm"));
             } else {
-                Serial.println(F("offline"));
+                g_dbg->println(F("offline"));
             }
         }
     }
 
     if (_statusDisplay) {
-        Serial.print(F("Minima: motion="));
+        g_dbg->print(F("Minima: motion="));
         printMotionFlags(_statusDisplay->getLastMotionStatus());
-        Serial.println();
+        g_dbg->println();
     }
 
-    Serial.println(F("=============================================\n"));
+    // 电池电压
+    g_dbg->print(F("Battery: "));
+    g_dbg->print(_lastBattV, 2);
+    g_dbg->print(F(" V"));
+    if      (_lastBattV >= 12.0f) g_dbg->print(F("  [满电]"));
+    else if (_lastBattV >= 11.1f) g_dbg->print(F("  [正常]"));
+    else if (_lastBattV >= 10.5f) g_dbg->print(F("  [偏低]"));
+    else if (_lastBattV >  5.0f)  g_dbg->print(F("  [⚠ 低电！]"));
+    else                          g_dbg->print(F("  [未检测]"));
+    g_dbg->println();
+
+    g_dbg->println(F("=============================================\n"));
+}
+
+void SensorHub::forceDisplayAll() {
+    _lastDisplay = 0;  // 重置计时器，让 displayAll() 立即执行
+    displayAll();
 }
 
 void SensorHub::displayCompact() {
-    Serial.print(F("Sensors: depth="));
+    g_dbg->print(F("Sensors: depth="));
     if (_depthMgr) {
-        Serial.print(_depthMgr->getDepthCm(), 1);
-        Serial.print(F("cm"));
+        g_dbg->print(_depthMgr->getDepthCm(), 1);
+        g_dbg->print(F("cm"));
     } else {
-        Serial.print(F("--"));
+        g_dbg->print(F("--"));
     }
 
     if (_ultrasonicMgr) {
-        Serial.print(F(" | us="));
+        g_dbg->print(F(" | us="));
         for (uint8_t sensor = 0; sensor < NUM_ULTRASONIC; ++sensor) {
             if (_ultrasonicMgr->isValid(sensor)) {
-                Serial.print(_ultrasonicMgr->getDistance(sensor) / 10.0f, 0);
+                g_dbg->print(_ultrasonicMgr->getDistance(sensor) / 10.0f, 0);
             } else {
-                Serial.print(F("--"));
+                g_dbg->print(F("--"));
             }
 
             if (sensor + 1 < NUM_ULTRASONIC) {
-                Serial.print(' ');
+                g_dbg->print(' ');
             }
         }
     }
 
-    Serial.println();
+    g_dbg->print(F(" | batt="));
+    g_dbg->print(_lastBattV, 1);
+    g_dbg->print(F("V"));
+    g_dbg->println();
 }
 
 bool SensorHub::isHealthy() const {

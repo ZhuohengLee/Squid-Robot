@@ -12,17 +12,12 @@
 #include "OtaConfig.local.h"
 #else
 
-constexpr char OTA_HOSTNAME[] = "squid-receiver-esp32";
-constexpr char OTA_PASSWORD[] = "receiver-ota";
+constexpr char OTA_HOSTNAME[] = "squid-robot";
+constexpr char OTA_PASSWORD[] = "12345678";
 
-// 为空时跳过 STA 连接，直接启用 SoftAP OTA。
-constexpr char OTA_STA_SSID[] = "";
-constexpr char OTA_STA_PASSWORD[] = "";
+constexpr uint32_t OTA_CONNECT_TIMEOUT_MS = 15000;
 
-constexpr char OTA_AP_SSID[] = "SquidReceiver-OTA";
-constexpr char OTA_AP_PASSWORD[] = "receiver-ota";
-
-constexpr uint32_t OTA_STA_CONNECT_TIMEOUT_MS = 15000;
+// HTTP SD 文件接口无需账号密码（与 OTA 同一局域网内可访问）。
 
 #endif
 

@@ -17,10 +17,12 @@
 #include "ForwardControl.h"
 
 namespace {
-constexpr uint32_t FORWARD_VALVE_INTERVAL_MS  =  500; // 正常推进阀门切换周期
+constexpr uint32_t FORWARD_VALVE_INTERVAL_MS  = 1000; // 正常推进阀门切换周期
 constexpr uint32_t FORWARD_BALANCE_DELAY_MS   =   10; // stop() 后延迟多久开始平衡
-constexpr uint32_t FORWARD_BALANCE_TIME_MS    = 5000; // 平衡窗口总时长
-constexpr uint32_t FORWARD_BALANCE_ALT_MS     =  500; // 平衡窗口内每路阀门打开时长
+constexpr uint32_t FORWARD_BALANCE_TIME_MS    =  800; // 正常 stop() 平衡窗口总时长
+constexpr uint32_t FORWARD_BALANCE_ALT_MS     =  200; // 正常 stop() 每路阀门打开时长
+constexpr uint32_t GLOBAL_BALANCE_TIME_MS     = 5000; // 全局平衡（s 命令）总时长
+constexpr uint32_t GLOBAL_BALANCE_ALT_MS      =  500; // 全局平衡每路阀门打开时长
 }
 
 ForwardControl::ForwardControl()
@@ -30,7 +32,9 @@ ForwardControl::ForwardControl()
       _balanceValveOpen(false),
       _balanceAltPhase(false),
       _phaseStartMs(0),
-      _balanceStartMs(0) {}
+      _balanceStartMs(0),
+      _balanceAltMs(FORWARD_BALANCE_ALT_MS),
+      _balanceTotalMs(FORWARD_BALANCE_TIME_MS) {}
 
 void ForwardControl::begin() {
     emergencyStop();
@@ -55,7 +59,21 @@ void ForwardControl::stop() {
     _valvesOpen       = false;
     _balanceValveOpen = false;
     _balanceAltPhase  = false;
-    _balanceStartMs   = 0;  // 由第一次 update() 初始化，避免时间差导致平衡阶段立即结束
+    _balanceStartMs   = 0;
+    _balanceAltMs     = FORWARD_BALANCE_ALT_MS;
+    _balanceTotalMs   = FORWARD_BALANCE_TIME_MS;
+}
+
+void ForwardControl::forceBalance() {
+    // 不管当前状态，直接进入全局平衡（500ms/5s）。
+    _running          = false;
+    _balancing        = true;
+    _valvesOpen       = false;
+    _balanceValveOpen = false;
+    _balanceAltPhase  = false;
+    _balanceStartMs   = 0;
+    _balanceAltMs     = GLOBAL_BALANCE_ALT_MS;
+    _balanceTotalMs   = GLOBAL_BALANCE_TIME_MS;
 }
 
 void ForwardControl::emergencyStop() {
@@ -89,14 +107,14 @@ void ForwardControl::update(uint32_t nowMs) {
 
         _balanceValveOpen =
             elapsed >= FORWARD_BALANCE_DELAY_MS &&
-            elapsed < FORWARD_BALANCE_DELAY_MS + FORWARD_BALANCE_TIME_MS;
+            elapsed < FORWARD_BALANCE_DELAY_MS + _balanceTotalMs;
 
         if (_balanceValveOpen) {
             const uint32_t inWindow = elapsed - FORWARD_BALANCE_DELAY_MS;
-            _balanceAltPhase = (inWindow / FORWARD_BALANCE_ALT_MS) % 2 != 0;
+            _balanceAltPhase = (inWindow / _balanceAltMs) % 2 != 0;
         }
 
-        if (elapsed >= FORWARD_BALANCE_DELAY_MS + FORWARD_BALANCE_TIME_MS) {
+        if (elapsed >= FORWARD_BALANCE_DELAY_MS + _balanceTotalMs) {
             _balancing        = false;
             _balanceValveOpen = false;
             _balanceAltPhase  = false;

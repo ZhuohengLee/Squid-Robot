@@ -1,15 +1,12 @@
 /**********************************************************************
- * ESP32.ino  —  V6
+ * ESP32.ino  —  V7
  *
- * 版本变更（V6）：
- *   - 新增 HC-12 无线串口接收通道（Serial2, IO1/IO2/IO47）；
- *   - 新增 HC-12 信道配对命令 ESP001~ESP127（CommandHandler 拦截处理）；
- *   - OTA WiFi 新增网页配网（Captive Portal），支持 NVS 凭据持久化，
- *     30s 未连接自动开启热点 SquidRobot-Setup；
- *   - 新增水下 WiFi 管理：启动时 3s 超声波预检测，水下跳过 WiFi；
- *     运行中检测到超声波读数则关闭 WiFi；出水 30s 后自动重启重连；
- *   - CH9434A SPI 初始化失败时自动重试 5 次，全失败后软复位 MCU；
- *   - 前进阀切换间隔调整为 500 ms。
+ * 版本变更（V7）：
+ *   - OTA 配网改为纯网页配网（Captive Portal），不再依赖硬编码 SSID；
+ *     上电后优先尝试 NVS 保存的 WiFi（10s），失败则开启 SquidRobot-Setup 热点；
+ *   - j/k 浮沉命令改为切换式（toggle）：同向再按停止，异向直接切换；
+ *   - 浮沉 s 急停新增气压平衡（E/F 同时交替开关，500ms/5s）；
+ *   - 前进阀切换间隔调整为 1s。
  *
  * ESP32 负责：
  * 1. 读取深度和超声波传感器；
@@ -30,6 +27,7 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <WiFi.h>
+#include "TeeStream.h"
 #include "AutoNavigator.h"
 #include "CH9434A.h"
 #include "CommandHandler.h"
@@ -41,12 +39,18 @@
 #include "OtaManager.h"
 #include "Protocol.h"
 #include "RightTurnControl.h"
+#include "SDLogger.h"
 #include "SensorHub.h"
 #include "StatusDisplay.h"
 #include "UltrasonicManager.h"
 
+// HC-12 初始化前指向 USB Serial，cmdHandler.begin() 后切换到 TeeStream。
+static TeeStream _dbgTee(Serial, HC12_SERIAL);
+Print* g_dbg = &Serial;
+
 CH9434A ch9434(SPI_CS, CH9434A_INT);
 DepthSensorManager depthMgr;
+SDLogger sdLogger;
 UltrasonicManager ultrasonicMgr(&ch9434);
 SensorHub sensorHub;
 
@@ -65,18 +69,82 @@ namespace {
 constexpr uint32_t STARTUP_DEPTH_CALIBRATION_DELAY_MS = 2000;
 constexpr uint8_t  DEPTH_INIT_RETRIES                  = 3;
 constexpr uint32_t DEPTH_INIT_RETRY_DELAY_MS           = 200;
+constexpr uint32_t SURFACE_TIMEOUT_MS                  = 10000; // 10s 无超声波 → 出水
+constexpr uint32_t SUBMERGE_CONFIRM_MS                 = 10000; // 三路超声波持续 10s 有效 → 入水
+constexpr uint32_t SD_LOG_INTERVAL_MS                  = 200;   // 5 Hz
 
-// 水下预检测：上电后在此时间窗口内扫描超声波，决定是否跳过 WiFi
-constexpr uint32_t UNDERWATER_PRECHECK_MS = 3000;
+bool     gStartupDepthCalibrationDone = false;
+uint32_t gLastLogMs                   = 0;
+}
 
-// loop() 中：WiFi 关闭后，超声波连续无读数多久后重启（认为已出水）
-constexpr uint32_t SURFACE_RESTART_TIMEOUT_MS = 30000;
+// ── 机器人运行模式 ────────────────────────────────────────────────────
+enum RobotMode : uint8_t { ROBOT_DEBUG, ROBOT_TEST };
+RobotMode gRobotMode          = ROBOT_DEBUG;
+uint32_t  gLastSonarValidMs   = 0;
+uint32_t  gAllSonarValidSince = 0;    // 三路同时有效起始时刻，0 表示未开始计时
+bool      gManualTestMode     = false;  // true = mt 手动进入，不自动退出
 
-bool gStartupDepthCalibrationDone = false;
+// 前向声明
+void enterTestMode();
+void enterDebugMode();
+void enterTestModeManual();
 
-// WiFi 关闭状态追踪
-bool     gWifiKilled    = false;   // loop() 中已主动关闭 WiFi
-uint32_t gLastSonarMs   = 0;       // 最后一次收到有效超声波读数的时间戳
+void enterTestMode() {
+    if (gRobotMode == ROBOT_TEST) {
+        Serial.println(F("已在测试模式中。"));
+        return;
+    }
+    gRobotMode = ROBOT_TEST;
+    g_dbg = &Serial;   // WebConsole 断开，切回 USB 串口
+    WiFi.mode(WIFI_OFF);
+
+    char folder[32];
+    otaManager.getSessionFolderName(folder, sizeof(folder));
+    const bool sdOk = sdLogger.startSession(folder);
+    if (sdOk) {
+        sdLogger.logEvent(millis(), "TEST mode started");
+        Serial.println(F(">>> 测试模式：WiFi 已关闭，SD 记录已开始。"));
+    } else {
+        Serial.println(F(">>> 测试模式：WiFi 已关闭，但 SD 记录启动失败！"));
+        Serial.println(F("    检查 SD 卡是否插好/格式化，本次 session 不会有数据。"));
+    }
+    Serial.println(F("    WiFi 关闭期间 FTP/OTA 不可用。输入 'md' 返回调试模式后可访问 FTP。"));
+    if (gManualTestMode) {
+        Serial.println(F("    手动模式：不会自动退出，输入 'md' 退出。"));
+    }
+}
+
+// mt 命令触发：手动进入 TEST 模式，不受超声波超时自动退出。
+void enterTestModeManual() {
+    gManualTestMode = true;
+    enterTestMode();
+}
+
+void enterDebugMode() {
+    if (gRobotMode == ROBOT_DEBUG) {
+        g_dbg->println(F("已在调试模式中。"));
+        return;
+    }
+    const uint32_t ms = millis();
+    sdLogger.logEvent(ms, "TEST mode ended");
+    sdLogger.endSession(ms);
+    gRobotMode          = ROBOT_DEBUG;
+    gManualTestMode     = false;
+    gAllSonarValidSince = 0;   // 重新开始入水确认计时
+
+    Serial.println(F(">>> 调试模式：正在重新启用 WiFi..."));
+    otaManager.begin(false);
+
+    if (otaManager.isReady()) {
+        otaManager.beginWebConsole([](uint8_t* data, size_t len) {
+            String msg = String(reinterpret_cast<const char*>(data), len);
+            msg.trim();
+            if (msg.length() > 0) cmdHandler.processWebInput(msg);
+        });
+        _dbgTee.setThird(otaManager.getConsolePrint());
+        g_dbg = &_dbgTee;
+        Serial.println(F("WiFi 和浏览器控制台已恢复，FTP 可访问。"));
+    }
 }
 
 // 打印当前系统拓扑，方便串口检查运行模式。
@@ -111,13 +179,6 @@ static uint16_t composeActuatorMask() {
     return mask;
 }
 
-static void stayAliveForOta() {
-    while (1) {
-        otaManager.handle();
-        delay(10);
-    }
-}
-
 static void handleStartupDepthCalibration(uint32_t nowMs) {
     if (gStartupDepthCalibrationDone || nowMs < STARTUP_DEPTH_CALIBRATION_DELAY_MS) {
         return;
@@ -130,14 +191,7 @@ static void handleStartupDepthCalibration(uint32_t nowMs) {
     sensorHub.calibrateDepthZero();
     depthController.resetAfterCalibration();
     gStartupDepthCalibrationDone = true;
-    Serial.println(F("Startup depth auto-calibration complete."));
-}
-
-// 返回当前是否有任意一路超声波读数有效
-static bool anySonarValid() {
-    return ultrasonicMgr.isValid(SENSOR_FRONT) ||
-           ultrasonicMgr.isValid(SENSOR_LEFT)  ||
-           ultrasonicMgr.isValid(SENSOR_RIGHT);
+    g_dbg->println(F("Startup depth auto-calibration complete."));
 }
 
 void setup() {
@@ -179,39 +233,35 @@ void setup() {
         Serial.println(F("FAILED"));
     }
 
-    // ── 水下预检测（3s）──────────────────────────────────────────────
-    // 若开机时传感器已读到障碍物，说明机器人已在水中，跳过 WiFi
-    Serial.print(F("Underwater pre-check (3s)..."));
-    bool underwaterAtBoot = false;
-    {
-        const uint32_t precheckEnd = millis() + UNDERWATER_PRECHECK_MS;
-        while (millis() < precheckEnd) {
-            ultrasonicMgr.update();
-            if (anySonarValid()) {
-                underwaterAtBoot = true;
-                break;
-            }
-            delay(50);
-        }
-    }
-    if (underwaterAtBoot) {
-        Serial.println(F(" UNDERWATER detected, skipping WiFi."));
-        gWifiKilled  = true;
-        gLastSonarMs = millis();
+    // ── SD 卡（独立 SPI 总线）────────────────────────────────────────
+    Serial.print(F("Initializing SD card... "));
+    if (sdLogger.begin()) {
+        Serial.println(F("OK"));
     } else {
-        Serial.println(F(" clear."));
+        Serial.println(F("FAILED (logging disabled)"));
     }
 
-    // ── OTA / WiFi（水下时跳过）──────────────────────────────────────
-    otaManager.begin(underwaterAtBoot);
+    // ── WiFi + NTP + OTA + FTP（始终执行，用于时间校准）─────────────
+    otaManager.begin(false);
+
+    // ── 浏览器串口（WiFi 就绪后启动，访问 http://<IP>/console）─────
+    if (otaManager.isReady()) {
+        otaManager.beginWebConsole([](uint8_t* data, size_t len) {
+            String msg = String(reinterpret_cast<const char*>(data), len);
+            msg.trim();
+            if (msg.length() > 0) cmdHandler.processWebInput(msg);
+        });
+        _dbgTee.setThird(otaManager.getConsolePrint());
+        g_dbg = &_dbgTee;
+    }
 
     // ── 深度传感器 ────────────────────────────────────────────────────
-    Serial.print(F("Initializing MS5837 depth sensor"));
+    g_dbg->print(F("Initializing MS5837 depth sensor"));
     bool depthReady = false;
     for (uint8_t attempt = 1; attempt <= DEPTH_INIT_RETRIES; ++attempt) {
         if (attempt > 1) {
-            Serial.print(F(" | retry "));
-            Serial.print(attempt);
+            g_dbg->print(F(" | retry "));
+            g_dbg->print(attempt);
         }
 
         if (depthMgr.begin()) {
@@ -223,11 +273,11 @@ void setup() {
     }
 
     if (depthReady) {
-        Serial.println(F("... OK"));
+        g_dbg->println(F("... OK"));
     } else {
-        Serial.print(F("... FAILED ("));
-        Serial.print(depthMgr.getStatusText());
-        Serial.println(F(")"));
+        g_dbg->print(F("... FAILED ("));
+        g_dbg->print(depthMgr.getStatusText());
+        g_dbg->println(F(")"));
     }
 
     // ── 传感器 Hub 配置 ───────────────────────────────────────────────
@@ -253,41 +303,68 @@ void setup() {
     cmdHandler.setRightTurnControl(&rightTurnControl);
     cmdHandler.setDepthController(&depthController);
     cmdHandler.setAutoNavigator(&autoNavigator);
+    cmdHandler.setSDLogger(&sdLogger);
+    cmdHandler.setEnterTestModeCallback(enterTestModeManual);  // 手动 mt → 不自动退出
+    cmdHandler.setEnterDebugModeCallback(enterDebugMode);
 
-    Serial.println(F("System ready. Type h for commands.\n"));
+    g_dbg->println(F("系统就绪，输入 h 查看命令列表。\n"));
 }
 
 void loop() {
     const uint32_t nowMs = millis();
 
+    cmdHandler.update(nowMs);
     cmdHandler.processSerialInput();
     cmdHandler.processHC12Input();
 
     depthMgr.update();
     ultrasonicMgr.update();
+    sensorHub.updateBattery();
     handleStartupDepthCalibration(nowMs);
 
-    // ── 水下 WiFi 管理 ────────────────────────────────────────────────
-    if (anySonarValid()) {
-        gLastSonarMs = nowMs;
-        if (!gWifiKilled && otaManager.isReady()) {
-            // 入水后检测到超声波读数 → 关闭 WiFi，减少水下干扰
-            WiFi.mode(WIFI_OFF);
-            gWifiKilled = true;
-            Serial.println(F("Underwater detected: WiFi disabled."));
+    // 每轮只查一次传感器有效位，下游复用（避免 6 次 isValid 冗余调用）
+    const bool usFrontValid = ultrasonicMgr.isValid(SENSOR_FRONT);
+    const bool usLeftValid  = ultrasonicMgr.isValid(SENSOR_LEFT);
+    const bool usRightValid = ultrasonicMgr.isValid(SENSOR_RIGHT);
+    const bool depthValid   = depthMgr.isValid();
+    const bool anyUsValid   = usFrontValid || usLeftValid || usRightValid;
+    const bool allUsValid   = usFrontValid && usLeftValid && usRightValid;
+
+    // 模式自动切换：三路同时有效 SUBMERGE_CONFIRM_MS → TEST；三路全部失效 SURFACE_TIMEOUT_MS → DEBUG
+    if (allUsValid) {
+        if (gAllSonarValidSince == 0) {
+            gAllSonarValidSince = nowMs;
+            if (gRobotMode == ROBOT_DEBUG) {
+                g_dbg->print(F("[AUTO] 三路超声波已同时有效，"));
+                g_dbg->print(SUBMERGE_CONFIRM_MS / 1000);
+                g_dbg->println(F("s 后进入 TEST 模式..."));
+            }
         }
-    } else if (gWifiKilled && gLastSonarMs > 0 &&
-               (nowMs - gLastSonarMs) > SURFACE_RESTART_TIMEOUT_MS) {
-        // WiFi 已关闭且超声波 30s 无读数 → 认为已出水，重启以重连 WiFi
-        Serial.println(F("Surfaced detected: restarting to re-enable WiFi..."));
-        delay(500);
-        ESP.restart();
+        gLastSonarValidMs = nowMs;
+        if (gRobotMode == ROBOT_DEBUG &&
+            (nowMs - gAllSonarValidSince) >= SUBMERGE_CONFIRM_MS) {
+            gManualTestMode = false;
+            enterTestMode();
+        }
+    } else {
+        if (gAllSonarValidSince != 0 && gRobotMode == ROBOT_DEBUG) {
+            g_dbg->println(F("[AUTO] 超声波中断，入水确认已取消。"));
+        }
+        gAllSonarValidSince = 0;
+        if (anyUsValid) {
+            gLastSonarValidMs = nowMs;
+        }
+        if (!gManualTestMode &&
+            gRobotMode == ROBOT_TEST &&
+            gLastSonarValidMs > 0 &&
+            (nowMs - gLastSonarValidMs) > SURFACE_TIMEOUT_MS) {
+            enterDebugMode();
+        }
     }
-    // ─────────────────────────────────────────────────────────────────
 
     autoNavigator.update(ultrasonicMgr, nowMs);
     depthController.update(
-        depthMgr.isValid(),
+        depthValid,
         depthMgr.getDepthCm(),
         depthMgr.getDepthSpeedCmS(),
         depthMgr.getDepthAccelCmS2(),
@@ -296,6 +373,22 @@ void loop() {
     forwardControl.update(nowMs);
     leftTurnControl.update(nowMs);
     rightTurnControl.update(nowMs);
+
+    // SD 传感器日志：5 Hz（仅 TEST session 激活时写入）
+    if (sdLogger.hasSession() && nowMs - gLastLogMs >= SD_LOG_INTERVAL_MS) {
+        gLastLogMs = nowMs;
+        sdLogger.logSensor(
+            nowMs,
+            depthValid ? depthMgr.getDepthCm()        : -1.0f,
+            depthValid ? depthMgr.getDepthSpeedCmS()  : -1.0f,
+            depthValid ? depthMgr.getDepthAccelCmS2() : -1.0f,
+            usFrontValid ? ultrasonicMgr.getDistance(SENSOR_FRONT) / 10.0f : -1.0f,
+            usLeftValid  ? ultrasonicMgr.getDistance(SENSOR_LEFT)  / 10.0f : -1.0f,
+            usRightValid ? ultrasonicMgr.getDistance(SENSOR_RIGHT) / 10.0f : -1.0f,
+            statusDisplay.getLastMotionStatus(),
+            sensorHub.getBatteryVoltage()
+        );
+    }
 
     motionLink.applyMask(composeActuatorMask());
     motionLink.applyBuoyancy(depthController.getBuoyancyDirection(), depthController.getBuoyancyPwm());
