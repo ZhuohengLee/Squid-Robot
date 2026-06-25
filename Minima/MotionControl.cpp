@@ -143,6 +143,7 @@ void MotionController::writeBuoyancyOutputs(uint32_t nowMs) {
         _appliedBuoyancyPwm = 0;
         _appliedBuoyancyDirection = BUOYANCY_STOP;
         digitalWrite(PUMP_G_PIN,  LOW);
+        // 停止：E/F 全断电（两阀同关 = 隔离保持，与前进/转向同步逻辑一致）。
         digitalWrite(VALVE_E_PIN, LOW);
         digitalWrite(VALVE_F_PIN, LOW);
         return;
@@ -172,13 +173,13 @@ void MotionController::writeBuoyancyOutputs(uint32_t nowMs) {
 
     _appliedBuoyancyPwm = _requestedBuoyancyPwm;
 
-    // 浮力阀 e/f 差动控制（电磁阀做气压隔离）：
-    //   上浮：E 通电，F 断电
-    //   下沉：E 断电，F 通电
+    // 浮力阀 e/f 同步控制（与前进 A/B、转向 C/D 同一套逻辑：两阀同时开/关）：
+    //   下沉：E/F 同时通电（两阀同开）
+    //   上浮：E/F 同时断电（两阀同关）
     //   停止：E F 全断电（由上层 STOP 分支处理，此处不会到达）
-    const bool ascend = _appliedBuoyancyDirection == BUOYANCY_ASCEND;
-    digitalWrite(VALVE_E_PIN, ascend ? HIGH : LOW);
-    digitalWrite(VALVE_F_PIN, ascend ? LOW  : HIGH);
+    const bool descend = _appliedBuoyancyDirection == BUOYANCY_DESCEND;
+    digitalWrite(VALVE_E_PIN, descend ? HIGH : LOW);
+    digitalWrite(VALVE_F_PIN, descend ? HIGH : LOW);
 
     // 软件 PWM：按占空比控制浮力泵。
     const uint32_t dutyUs =
