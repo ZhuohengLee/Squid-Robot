@@ -3,6 +3,11 @@
 ESP32/OtaConfig.local.h
 V6_HC12遥控/ESP32_V6/OtaConfig.local.h
 
+ESP32_SLAM/OtaConfig.local.h
+.claude/
+__pycache__/
+*.pyc
+
 # Prerequisites
 *.d
 

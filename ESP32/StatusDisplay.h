@@ -17,16 +17,10 @@ public:
     // 轮询并解析 Minima 回传的状态帧。
     void processMinimaFeedback();
 
-    // 详细输出控制。
-    void enableVerbose();
-    void disableVerbose();
-    void toggleVerbose();
-    bool isVerboseEnabled() const;
     uint8_t getLastMotionStatus() const;
     bool hasRecentHeartbeat(uint32_t nowMs, uint32_t timeoutMs = 3000) const;
 
 private:
-    bool _verboseMode;
     unsigned long _lastHeartbeat;
     uint8_t _lastMotionStatus;
     uint8_t _rxBuffer[FRAME_LENGTH];

@@ -15,7 +15,7 @@ constexpr uint8_t MS5837_CMD_CONVERT_D1_8192 = 0x4A;
 constexpr uint8_t MS5837_CMD_CONVERT_D2_8192 = 0x5A;
 
 constexpr uint32_t MS5837_RESET_DELAY_MS = 20;
-constexpr uint32_t MS5837_CONVERSION_DELAY_MS = 20;
+constexpr uint32_t MS5837_CONVERSION_DELAY_MS = 40;
 constexpr uint32_t SAMPLE_INTERVAL_MS = 50;
 constexpr uint32_t DATA_TIMEOUT_MS = 2000;
 constexpr uint8_t PROM_WORD_COUNT = 7;
@@ -118,7 +118,11 @@ void DepthSensorManager::update() {
         }
     }
 
-    if (_valid && now - _lastUpdate > DATA_TIMEOUT_MS) {
+    // commitDepth() 内部又取了一次 millis()（I2C 读取耗时几 ms），用
+    // update() 入口的旧 now 减新写入的 _lastUpdate 会 uint32_t 下溢成
+    // ~4 billion，永远触发 stale。重新读一次 millis() 保证差值非负。
+    const uint32_t nowAfter = millis();
+    if (_valid && nowAfter - _lastUpdate > DATA_TIMEOUT_MS) {
         _valid = false;
         _filterInitialized = false;
         _depthSpeedCmS = 0.0f;
@@ -380,7 +384,12 @@ bool DepthSensorManager::readAdc(uint8_t conversionCommand, uint32_t& value, Rea
             value |= static_cast<uint32_t>(Wire.read());
             _lastReadFailure = READ_OK;
             _lastI2cError = 0;
-            return value != 0;
+            if (value == 0) {
+                // ADC 返回 0 = 转换未完成，再等一轮重试
+                delay(MS5837_CONVERSION_DELAY_MS);
+                continue;
+            }
+            return true;
         }
 
         while (Wire.available()) {
@@ -409,8 +418,8 @@ bool DepthSensorManager::readMeasurement(float& pressureMbar, float& temperature
 
     const int32_t dT = static_cast<int32_t>(d2) - (static_cast<int32_t>(_prom[5]) << 8);
     int64_t temp = 2000LL + ((static_cast<int64_t>(dT) * _prom[6]) >> 23);
-    int64_t off = (static_cast<int64_t>(_prom[2]) << 17) +
-                  ((static_cast<int64_t>(_prom[4]) * dT) >> 6);
+    int64_t off  = (static_cast<int64_t>(_prom[2]) << 17) +
+                   ((static_cast<int64_t>(_prom[4]) * dT) >> 6);
     int64_t sens = (static_cast<int64_t>(_prom[1]) << 16) +
                    ((static_cast<int64_t>(_prom[3]) * dT) >> 7);
 

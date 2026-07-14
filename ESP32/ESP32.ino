@@ -34,6 +34,7 @@
 #include "DepthController.h"
 #include "DepthSensorManager.h"
 #include "ForwardControl.h"
+#include "ImuManager.h"
 #include "LeftTurnControl.h"
 #include "MotionLink.h"
 #include "OtaManager.h"
@@ -52,6 +53,7 @@ CH9434A ch9434(SPI_CS, CH9434A_INT);
 DepthSensorManager depthMgr;
 SDLogger sdLogger;
 UltrasonicManager ultrasonicMgr(&ch9434);
+ImuManager imuMgr(&ch9434);
 SensorHub sensorHub;
 
 MotionLink motionLink;
@@ -69,25 +71,20 @@ namespace {
 constexpr uint32_t STARTUP_DEPTH_CALIBRATION_DELAY_MS = 2000;
 constexpr uint8_t  DEPTH_INIT_RETRIES                  = 3;
 constexpr uint32_t DEPTH_INIT_RETRY_DELAY_MS           = 200;
-constexpr uint32_t SURFACE_TIMEOUT_MS                  = 10000; // 10s 无超声波 → 出水
-constexpr uint32_t SUBMERGE_CONFIRM_MS                 = 10000; // 三路超声波持续 10s 有效 → 入水
-constexpr uint32_t SD_LOG_INTERVAL_MS                  = 200;   // 5 Hz
+constexpr uint32_t SD_LOG_INTERVAL_MS                  = 50;    // 20 Hz（对齐 learning 训练采样率）
 
 bool     gStartupDepthCalibrationDone = false;
 uint32_t gLastLogMs                   = 0;
 }
 
 // ── 机器人运行模式 ────────────────────────────────────────────────────
+// TEST/DEBUG 仅由手动 mt/md 命令切换（已移除超声波自动入水/出水切换）。
 enum RobotMode : uint8_t { ROBOT_DEBUG, ROBOT_TEST };
-RobotMode gRobotMode          = ROBOT_DEBUG;
-uint32_t  gLastSonarValidMs   = 0;
-uint32_t  gAllSonarValidSince = 0;    // 三路同时有效起始时刻，0 表示未开始计时
-bool      gManualTestMode     = false;  // true = mt 手动进入，不自动退出
+RobotMode gRobotMode = ROBOT_DEBUG;
 
 // 前向声明
 void enterTestMode();
 void enterDebugMode();
-void enterTestModeManual();
 
 void enterTestMode() {
     if (gRobotMode == ROBOT_TEST) {
@@ -95,7 +92,10 @@ void enterTestMode() {
         return;
     }
     gRobotMode = ROBOT_TEST;
-    g_dbg = &Serial;   // WebConsole 断开，切回 USB 串口
+    // WiFi 即将关闭，要取消 WebConsole 那一路输出，但保留 USB Serial + HC-12
+    // 两路（_dbgTee 的前两路）。否则 g_dbg 整个换成 &Serial 会让遥控端通过
+    // HC-12 收不到任何 println，看不到传感器输出和命令反馈，误以为控制失效。
+    _dbgTee.setThird(nullptr);
     WiFi.mode(WIFI_OFF);
 
     char folder[32];
@@ -109,15 +109,6 @@ void enterTestMode() {
         Serial.println(F("    检查 SD 卡是否插好/格式化，本次 session 不会有数据。"));
     }
     Serial.println(F("    WiFi 关闭期间 FTP/OTA 不可用。输入 'md' 返回调试模式后可访问 FTP。"));
-    if (gManualTestMode) {
-        Serial.println(F("    手动模式：不会自动退出，输入 'md' 退出。"));
-    }
-}
-
-// mt 命令触发：手动进入 TEST 模式，不受超声波超时自动退出。
-void enterTestModeManual() {
-    gManualTestMode = true;
-    enterTestMode();
 }
 
 void enterDebugMode() {
@@ -128,9 +119,7 @@ void enterDebugMode() {
     const uint32_t ms = millis();
     sdLogger.logEvent(ms, "TEST mode ended");
     sdLogger.endSession(ms);
-    gRobotMode          = ROBOT_DEBUG;
-    gManualTestMode     = false;
-    gAllSonarValidSince = 0;   // 重新开始入水确认计时
+    gRobotMode = ROBOT_DEBUG;
 
     Serial.println(F(">>> 调试模式：正在重新启用 WiFi..."));
     otaManager.begin(false);
@@ -156,7 +145,7 @@ static void printWelcome() {
     Serial.println(F("  CH9434A UART1 -> Front ultrasonic"));
     Serial.println(F("  CH9434A UART2 -> Left ultrasonic"));
     Serial.println(F("  CH9434A UART0 -> Right ultrasonic"));
-    Serial.println(F("  CH9434A UART3 -> Unused"));
+    Serial.println(F("  CH9434A UART3 -> IMU (EBIMU-9DOFV6, 115200)"));
     Serial.println(F("Control topology:"));
     Serial.println(F("  ESP32         -> Timing / Kalman / Auto nav"));
     Serial.println(F("  Minima        -> Pure actuator executor"));
@@ -233,6 +222,14 @@ void setup() {
         Serial.println(F("FAILED"));
     }
 
+    // ── IMU UART 初始化（CH9434A UART3）────────────────────────────────
+    Serial.print(F("Initializing IMU (EBIMU-9DOFV6)... "));
+    if (imuMgr.begin()) {
+        Serial.println(F("OK"));
+    } else {
+        Serial.println(F("FAILED"));
+    }
+
     // ── SD 卡（独立 SPI 总线）────────────────────────────────────────
     Serial.print(F("Initializing SD card... "));
     if (sdLogger.begin()) {
@@ -284,6 +281,7 @@ void setup() {
     sensorHub.setDepthSensorManager(&depthMgr);
     sensorHub.setStatusDisplay(&statusDisplay);
     sensorHub.setUltrasonicManager(&ultrasonicMgr);
+    sensorHub.setImuManager(&imuMgr);
 
     // ── 运动控制初始化 ────────────────────────────────────────────────
     motionLink.begin();
@@ -304,7 +302,7 @@ void setup() {
     cmdHandler.setDepthController(&depthController);
     cmdHandler.setAutoNavigator(&autoNavigator);
     cmdHandler.setSDLogger(&sdLogger);
-    cmdHandler.setEnterTestModeCallback(enterTestModeManual);  // 手动 mt → 不自动退出
+    cmdHandler.setEnterTestModeCallback(enterTestMode);  // 手动 mt 进入 TEST
     cmdHandler.setEnterDebugModeCallback(enterDebugMode);
 
     g_dbg->println(F("系统就绪，输入 h 查看命令列表。\n"));
@@ -319,6 +317,7 @@ void loop() {
 
     depthMgr.update();
     ultrasonicMgr.update();
+    imuMgr.update();
     sensorHub.updateBattery();
     handleStartupDepthCalibration(nowMs);
 
@@ -327,40 +326,8 @@ void loop() {
     const bool usLeftValid  = ultrasonicMgr.isValid(SENSOR_LEFT);
     const bool usRightValid = ultrasonicMgr.isValid(SENSOR_RIGHT);
     const bool depthValid   = depthMgr.isValid();
-    const bool anyUsValid   = usFrontValid || usLeftValid || usRightValid;
-    const bool allUsValid   = usFrontValid && usLeftValid && usRightValid;
 
-    // 模式自动切换：三路同时有效 SUBMERGE_CONFIRM_MS → TEST；三路全部失效 SURFACE_TIMEOUT_MS → DEBUG
-    if (allUsValid) {
-        if (gAllSonarValidSince == 0) {
-            gAllSonarValidSince = nowMs;
-            if (gRobotMode == ROBOT_DEBUG) {
-                g_dbg->print(F("[AUTO] 三路超声波已同时有效，"));
-                g_dbg->print(SUBMERGE_CONFIRM_MS / 1000);
-                g_dbg->println(F("s 后进入 TEST 模式..."));
-            }
-        }
-        gLastSonarValidMs = nowMs;
-        if (gRobotMode == ROBOT_DEBUG &&
-            (nowMs - gAllSonarValidSince) >= SUBMERGE_CONFIRM_MS) {
-            gManualTestMode = false;
-            enterTestMode();
-        }
-    } else {
-        if (gAllSonarValidSince != 0 && gRobotMode == ROBOT_DEBUG) {
-            g_dbg->println(F("[AUTO] 超声波中断，入水确认已取消。"));
-        }
-        gAllSonarValidSince = 0;
-        if (anyUsValid) {
-            gLastSonarValidMs = nowMs;
-        }
-        if (!gManualTestMode &&
-            gRobotMode == ROBOT_TEST &&
-            gLastSonarValidMs > 0 &&
-            (nowMs - gLastSonarValidMs) > SURFACE_TIMEOUT_MS) {
-            enterDebugMode();
-        }
-    }
+    // 模式切换仅由手动 mt/md 命令完成（已移除超声波自动入水/出水切换）。
 
     autoNavigator.update(ultrasonicMgr, nowMs);
     depthController.update(
@@ -374,20 +341,47 @@ void loop() {
     leftTurnControl.update(nowMs);
     rightTurnControl.update(nowMs);
 
-    // SD 传感器日志：5 Hz（仅 TEST session 激活时写入）
+    // SD 传感器日志：20 Hz（仅 TEST session 激活时写入），对齐 learning 训练契约
     if (sdLogger.hasSession() && nowMs - gLastLogMs >= SD_LOG_INTERVAL_MS) {
+        const uint32_t dtMs = (gLastLogMs == 0) ? 0 : (nowMs - gLastLogMs);
         gLastLogMs = nowMs;
-        sdLogger.logSensor(
-            nowMs,
-            depthValid ? depthMgr.getDepthCm()        : -1.0f,
-            depthValid ? depthMgr.getDepthSpeedCmS()  : -1.0f,
-            depthValid ? depthMgr.getDepthAccelCmS2() : -1.0f,
-            usFrontValid ? ultrasonicMgr.getDistance(SENSOR_FRONT) / 10.0f : -1.0f,
-            usLeftValid  ? ultrasonicMgr.getDistance(SENSOR_LEFT)  / 10.0f : -1.0f,
-            usRightValid ? ultrasonicMgr.getDistance(SENSOR_RIGHT) / 10.0f : -1.0f,
-            statusDisplay.getLastMotionStatus(),
-            sensorHub.getBatteryVoltage()
-        );
+        const bool imuOk = imuMgr.isValid();
+        const bool depthHolding = depthController.isHoldingTarget();
+        const float uBase = depthController.getControlOutput();  // 基线控制器输出
+        const float target = depthHolding ? depthController.getTargetDepthCm() : 0.0f;
+        const float depthErr = (depthHolding && depthValid)
+                               ? (target - depthMgr.getDepthCm()) : 0.0f;
+
+        SensorLogRow row;
+        row.timestampMs     = nowMs;
+        row.dtMs            = dtMs;
+        row.robotMode       = (gRobotMode == ROBOT_TEST) ? 1 : 0;
+        row.controlMode     = (cmdHandler.getMode() == CommandHandler::MODE_AUTO) ? 1 : 0;
+        row.depthValid      = depthValid;
+        row.imuValid        = imuOk;
+        row.batteryV        = sensorHub.getBatteryVoltage();
+        row.targetDepthCm   = target;
+        row.filteredDepthCm = depthValid ? depthMgr.getDepthCm()        : 0.0f;
+        row.depthSpeedCmS   = depthValid ? depthMgr.getDepthSpeedCmS()  : 0.0f;
+        row.depthAccelCmS2  = depthValid ? depthMgr.getDepthAccelCmS2() : 0.0f;
+        row.roll            = imuOk ? imuMgr.getRoll()  : 0.0f;
+        row.pitch           = imuOk ? imuMgr.getPitch() : 0.0f;
+        row.yaw             = imuOk ? imuMgr.getYaw()   : 0.0f;
+        row.gyroX           = imuOk ? imuMgr.getGyroX() : 0.0f;
+        row.gyroY           = imuOk ? imuMgr.getGyroY() : 0.0f;
+        row.gyroZ           = imuOk ? imuMgr.getGyroZ() : 0.0f;
+        row.frontCm         = usFrontValid ? ultrasonicMgr.getDistance(SENSOR_FRONT) / 10.0f : -1.0f;
+        row.leftCm          = usLeftValid  ? ultrasonicMgr.getDistance(SENSOR_LEFT)  / 10.0f : -1.0f;
+        row.rightCm         = usRightValid ? ultrasonicMgr.getDistance(SENSOR_RIGHT) / 10.0f : -1.0f;
+        row.depthErrCm      = depthErr;
+        row.uBase           = uBase;
+        row.uResidual       = 0.0f;          // 暂无 NN 残差
+        row.uTotal          = uBase;         // 实际施加 = base + residual
+        row.buoyancyDir     = depthController.getBuoyancyDirection();
+        row.buoyancyPwm     = depthController.getBuoyancyPwm();
+        row.balancing       = depthController.isBalancing();
+        row.emergencyStop   = cmdHandler.isBalanceLocked();
+        sdLogger.logSensor(row);
     }
 
     motionLink.applyMask(composeActuatorMask());

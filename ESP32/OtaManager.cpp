@@ -435,8 +435,13 @@ void OtaManager::begin(bool underwaterMode) {
     WiFi.setAutoReconnect(true);
 
     if (!beginNvsMode()) {
-        g_dbg->println(F("WiFi: no saved credentials, starting provisioning portal."));
-        beginProvisioningPortal();
+        // 连不上 NVS 保存的 WiFi 时不再阻塞配网门户（旧设计会卡死 setup，
+        // 导致深度/传感器/控制都不初始化）。直接关 WiFi 继续启动。
+        // 需要重新配网时用 'md' 重连，或临时拉起配网门户。
+        g_dbg->println(F("WiFi: NVS 连接失败，跳过 WiFi 继续启动（无 OTA/FTP/网页/NTP）。"));
+        WiFi.mode(WIFI_OFF);
+        _ready = false;
+        return;
     }
 
     configureArduinoOta();

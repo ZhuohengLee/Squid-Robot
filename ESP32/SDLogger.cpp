@@ -8,14 +8,15 @@
 
 namespace {
 // sensors.csv 保持打开，写入 FLUSH_EVERY_N_ROWS 行后 flush。
-// 5 Hz × 5 行 = 1 s flush 一次，最多丢 1 s 数据。
-// SD 吞吐余量约 75x，即使 GC stall 200ms 也不会丢行。
-constexpr uint8_t FLUSH_EVERY_N_ROWS = 5;
+// 20 Hz × 20 行 = 1 s flush 一次，最多丢 1 s 数据。
+// SD 吞吐余量充足，即使 GC stall 也不会丢行。
+constexpr uint8_t FLUSH_EVERY_N_ROWS = 20;
 }  // namespace
 
 SDLogger::SDLogger()
     : _spi(HSPI), _sdReady(false), _sessionActive(false), _rowsSinceFlush(0) {
     _folder[0] = '\0';
+    _sessionId[0] = '\0';
 }
 
 bool SDLogger::begin() {
@@ -67,6 +68,10 @@ bool SDLogger::startSession(const char* folderName) {
         return false;
     }
 
+    // session_id = 文件夹名去掉前导 '/'，写入每行首列供训练按 session 切分
+    strncpy(_sessionId, _folder[0] == '/' ? _folder + 1 : _folder, sizeof(_sessionId));
+    _sessionId[sizeof(_sessionId) - 1] = '\0';
+
     char path[52];
 
     // sensors.csv —— 保持打开的高频写入文件
@@ -76,7 +81,7 @@ bool SDLogger::startSession(const char* folderName) {
         g_dbg->println(F("[SDLogger] Cannot create sensors.csv"));
         return false;
     }
-    _sensorFile.println(F("millis,depth_cm,vz_cms,az_cms2,us_front_cm,us_left_cm,us_right_cm,motion,batt_v"));
+    _sensorFile.println(F("session_id,timestamp_ms,dt_ms,robot_mode,control_mode,depth_valid,imu_valid,battery_v,target_depth_cm,filtered_depth_cm,depth_speed_cm_s,depth_accel_cm_s2,roll_deg,pitch_deg,yaw_deg,gyro_x_deg_s,gyro_y_deg_s,gyro_z_deg_s,front_distance_cm,left_distance_cm,right_distance_cm,depth_err_cm,u_base,u_residual,u_total,buoyancy_dir_applied,buoyancy_pwm_applied,balancing,emergency_stop"));
     _sensorFile.flush();
     _rowsSinceFlush = 0;
 
@@ -106,23 +111,37 @@ void SDLogger::endSession(uint32_t ms) {
     g_dbg->println(F("[SDLogger] Session closed."));
 }
 
-void SDLogger::logSensor(uint32_t ms,
-                          float depthCm, float vzCms, float azCms2,
-                          float usFront, float usLeft, float usRight,
-                          uint8_t motionStatus, float battV) {
+void SDLogger::logSensor(const SensorLogRow& r) {
     if (!_sessionActive || !_sensorFile) return;
 
-    _sensorFile.print(ms); _sensorFile.print(',');
-
-    auto wf = [&](float v, uint8_t d) {
-        if (v < 0.0f) _sensorFile.print(F("--")); else _sensorFile.print(v, d);
+    // 训练数据一律写数值（不写 "--"），无效由 depth_valid/imu_valid 标志位区分，
+    // 便于 Python 端 float() 解析；NaN 兜底为 0 防止写出 "nan"。
+    auto f = [&](float v, uint8_t d) {
+        _sensorFile.print(isnan(v) ? 0.0f : v, d);
         _sensorFile.print(',');
     };
 
-    wf(depthCm, 2); wf(vzCms, 2); wf(azCms2, 2);
-    wf(usFront, 1); wf(usLeft, 1); wf(usRight, 1);
-    _sensorFile.print(motionStatus); _sensorFile.print(',');
-    if (battV < 0.0f) _sensorFile.print(F("--")); else _sensorFile.print(battV, 2);
+    _sensorFile.print(_sessionId);          _sensorFile.print(',');
+    _sensorFile.print(r.timestampMs);       _sensorFile.print(',');
+    _sensorFile.print(r.dtMs);              _sensorFile.print(',');
+    _sensorFile.print(r.robotMode);         _sensorFile.print(',');
+    _sensorFile.print(r.controlMode);       _sensorFile.print(',');
+    _sensorFile.print(r.depthValid ? 1 : 0);_sensorFile.print(',');
+    _sensorFile.print(r.imuValid ? 1 : 0);  _sensorFile.print(',');
+    f(r.batteryV, 2);
+    f(r.targetDepthCm, 2);
+    f(r.filteredDepthCm, 2);
+    f(r.depthSpeedCmS, 2);
+    f(r.depthAccelCmS2, 2);
+    f(r.roll, 2); f(r.pitch, 2); f(r.yaw, 2);
+    f(r.gyroX, 2); f(r.gyroY, 2); f(r.gyroZ, 2);
+    f(r.frontCm, 1); f(r.leftCm, 1); f(r.rightCm, 1);
+    f(r.depthErrCm, 2);
+    f(r.uBase, 3); f(r.uResidual, 3); f(r.uTotal, 3);
+    _sensorFile.print(r.buoyancyDir);       _sensorFile.print(',');
+    _sensorFile.print(r.buoyancyPwm);       _sensorFile.print(',');
+    _sensorFile.print(r.balancing ? 1 : 0); _sensorFile.print(',');
+    _sensorFile.print(r.emergencyStop ? 1 : 0);
     _sensorFile.println();
 
     if (++_rowsSinceFlush >= FLUSH_EVERY_N_ROWS) {

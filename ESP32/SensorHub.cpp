@@ -25,6 +25,7 @@ SensorHub::SensorHub()
     : _depthMgr(nullptr),
       _statusDisplay(nullptr),
       _ultrasonicMgr(nullptr),
+      _imuMgr(nullptr),
       _lastDisplay(0),
       _lastBattMs(0),
       _lastBattV(0.0f) {
@@ -41,6 +42,10 @@ void SensorHub::setStatusDisplay(StatusDisplay* display) {
 
 void SensorHub::setUltrasonicManager(UltrasonicManager* manager) {
     _ultrasonicMgr = manager;
+}
+
+void SensorHub::setImuManager(ImuManager* manager) {
+    _imuMgr = manager;
 }
 
 float SensorHub::readBatteryVoltage() const {
@@ -68,24 +73,39 @@ void SensorHub::calibrateDepthZero() {
 }
 
 void SensorHub::displayAll() {
+    if (!_displayOn) return;   // g 开关：默认开，按 g 收起/展开全部传感器显示
     const uint32_t now = millis();
     if (now - _lastDisplay < DISPLAY_INTERVAL_MS) {
         return;
     }
     _lastDisplay = now;
+    renderAll();
+}
 
+bool SensorHub::toggleDisplay() {
+    _displayOn = !_displayOn;
+    return _displayOn;
+}
+
+void SensorHub::renderAll() {
     g_dbg->println(F("\n================ ALL SENSORS ================"));
 
     g_dbg->print(F("Depth: "));
-    if (_depthMgr) {
+    if (!_depthMgr) {
+        g_dbg->println(F("disabled"));
+    } else if (!_depthMgr->isValid()) {
+        g_dbg->print(F("⚠ 传感器故障 ("));
+        g_dbg->print(_depthMgr->getStatusText());
+        g_dbg->println(F(")"));
+        _depthMgr->printDebug();
+    } else {
         g_dbg->print(_depthMgr->getDepthCm(), 2);
         g_dbg->print(F(" cm | vz="));
         g_dbg->print(_depthMgr->getDepthSpeedCmS(), 2);
         g_dbg->print(F(" cm/s | az="));
         g_dbg->print(_depthMgr->getDepthAccelCmS2(), 2);
         g_dbg->println(F(" cm/s^2"));
-    } else {
-        g_dbg->println(F("disabled"));
+        _depthMgr->printDebug();
     }
 
     if (_ultrasonicMgr) {
@@ -100,6 +120,21 @@ void SensorHub::displayAll() {
             } else {
                 g_dbg->println(F("offline"));
             }
+        }
+    }
+
+    if (_imuMgr) {
+        g_dbg->print(F("IMU: "));
+        if (_imuMgr->isValid()) {
+            g_dbg->print(F("roll="));  g_dbg->print(_imuMgr->getRoll(),  2);
+            g_dbg->print(F(" pitch=")); g_dbg->print(_imuMgr->getPitch(), 2);
+            g_dbg->print(F(" yaw="));   g_dbg->print(_imuMgr->getYaw(),   2);
+            g_dbg->println(F(" deg"));
+        } else {
+            g_dbg->print(F("⚠ 传感器故障 ("));
+            g_dbg->print(_imuMgr->getStatusText());
+            g_dbg->println(F(")"));
+            _imuMgr->printDebug();
         }
     }
 
@@ -124,8 +159,8 @@ void SensorHub::displayAll() {
 }
 
 void SensorHub::forceDisplayAll() {
-    _lastDisplay = 0;  // 重置计时器，让 displayAll() 立即执行
-    displayAll();
+    _lastDisplay = millis();
+    renderAll();   // 立即渲染一次（不受 _displayOn 开关和限速影响）
 }
 
 void SensorHub::displayCompact() {

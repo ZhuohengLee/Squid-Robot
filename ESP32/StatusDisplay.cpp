@@ -8,9 +8,8 @@
 #include "TeeStream.h"
 
 StatusDisplay::StatusDisplay()
-    : _verboseMode(false),
-      _lastHeartbeat(0),
-      _lastMotionStatus(0),
+    : _lastHeartbeat(0),
+      _lastMotionStatus(0),   // 初始 IDLE；运动状态变化时才打印回传
       _rxIndex(0) {}
 
 void StatusDisplay::processMinimaFeedback() {
@@ -51,28 +50,6 @@ void StatusDisplay::processMinimaFeedback() {
     }
 }
 
-void StatusDisplay::enableVerbose() {
-    _verboseMode = true;
-    g_dbg->println(F("\nVerbose mode enabled\n"));
-}
-
-void StatusDisplay::disableVerbose() {
-    _verboseMode = false;
-    g_dbg->println(F("\nVerbose mode disabled\n"));
-}
-
-void StatusDisplay::toggleVerbose() {
-    if (_verboseMode) {
-        disableVerbose();
-    } else {
-        enableVerbose();
-    }
-}
-
-bool StatusDisplay::isVerboseEnabled() const {
-    return _verboseMode;
-}
-
 uint8_t StatusDisplay::getLastMotionStatus() const {
     return _lastMotionStatus;
 }
@@ -82,13 +59,13 @@ bool StatusDisplay::hasRecentHeartbeat(uint32_t nowMs, uint32_t timeoutMs) const
 }
 
 void StatusDisplay::processMotionStatus(uint8_t status) {
-    _lastMotionStatus = status;
-
-    if (!_verboseMode) {
+    // 仅在运动状态变化时打印（Minima 回传信息，始终保留，避免刷屏）
+    if (status == _lastMotionStatus) {
         return;
     }
+    _lastMotionStatus = status;
 
-    g_dbg->print(F("<- Motion: "));
+    g_dbg->print(F("<- Minima: "));
     if (status & 0x01) g_dbg->print(F("FWD "));
     if (status & 0x02) g_dbg->print(F("TURN "));
     if (status & 0x04) g_dbg->print(F("BUOY "));
